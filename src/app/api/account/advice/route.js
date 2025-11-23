@@ -123,7 +123,12 @@ export async function POST(request) {
   }
 
   // Permitir override del umbral mínimo antes de fallback local por petición (?minFallbackMs=0)
-  const MIN_FALLBACK_MS = Number(url.searchParams.get("minFallbackMs")) || ADVICE_MIN_FALLBACK_MS;
+  const qMinFallback = url.searchParams.get("minFallbackMs");
+  const MIN_FALLBACK_MS = qMinFallback !== null && qMinFallback !== undefined && qMinFallback !== ""
+    ? Number(qMinFallback)
+    : ADVICE_MIN_FALLBACK_MS;
+  // Si el cliente solicita minFallbackMs=0 queremos permitir respuesta inmediata (incluso si hay prefetch en curso)
+  const forceFallbackNow = MIN_FALLBACK_MS === 0;
   // Sombras locales de helpers para respetar el override de esta petición
   const canUseLocalFallback = (start) => {
     return (Date.now() - start) >= MIN_FALLBACK_MS;
@@ -216,8 +221,20 @@ export async function POST(request) {
       try { await prisma.usuario.update({ where: { id: userId }, data: { plan_ai: null } }); } catch {}
     }
 
-    // Concurrency guard también para peticiones normales (antes sólo prefetch). Si otra generación está activa, respondemos 202.
+    // Concurrency guard también para peticiones normales (antes sólo prefetch).
+    // Si otra generación está activa: normalmente 202; pero si minFallbackMs=0 -> devolver fallback inmediato 200.
     if (!isPrefetch && activeGenerations.has(userId)) {
+      if (forceFallbackNow) {
+        const fb = await generateFallbackContent();
+        // Extraer bloques básicos para estructurar
+        function extractJsonBlock(label, text) {
+          if (!text) return null; const labelIdx = text.indexOf(label + ":"); if (labelIdx >= 0) { const after = text.slice(labelIdx + label.length + 1); const startFence = after.match(/\s*```json\s*/i); let rest = after; if (startFence) rest = after.slice(startFence[0].length); const braceStart = rest.indexOf("{"); if (braceStart >= 0) { let i = braceStart, depth = 0; for (; i < rest.length; i++) { const ch = rest[i]; if (ch === '{') depth++; else if (ch === '}') { depth--; if (depth === 0) { const jsonStr = rest.slice(braceStart, i + 1); try { return JSON.parse(jsonStr); } catch {} break; } } } } } const fenceMatches = text.match(/```json\s*([\s\S]*?)```/gi) || []; for (const m of fenceMatches) { const inner = m.replace(/```json/i,'').replace(/```$/,''); try { return JSON.parse(inner.trim()); } catch {} } const simple = text.match(/\{[\s\S]*\}/); if (simple) { try { return JSON.parse(simple[0]); } catch {} } return null; }
+        const summary = extractJsonBlock('JSON_SUMMARY', fb.content) || null;
+        const meals = extractJsonBlock('JSON_MEALS', fb.content) || { items: [] };
+        const hydration = extractJsonBlock('JSON_HYDRATION', fb.content) || { litros: 2 };
+        const beveragesPlan = extractJsonBlock('JSON_BEVERAGES', fb.content) || null;
+        return NextResponse.json({ advice: fb.content, summary, meals, hydration, beverages: beveragesPlan, model: fb.usedModel, took_ms: fb.genMs, fallback: true }, { status: 200 });
+      }
       return NextResponse.json({ pending: true }, { status: 202, headers: { 'Retry-After': '10' } });
     }
 
@@ -554,8 +571,19 @@ ${wantTypesText}`;
       return NextResponse.json({ started: true }, { status: 202, headers: { 'Retry-After': '10' } });
     }
 
-    // Si hay una generación activa (iniciada vía prefetch) evitar trabajo duplicado y avisar al cliente
+    // Si hay una generación activa (iniciada vía prefetch) evitar trabajo duplicado;
+    // si minFallbackMs=0 -> devolver fallback inmediato 200.
     if (activeGenerations.has(userId) && !forceLong) {
+      if (forceFallbackNow) {
+        const fb = await generateFallbackContent();
+        function extractJsonBlock(label, text) {
+          if (!text) return null; const labelIdx = text.indexOf(label + ":"); if (labelIdx >= 0) { const after = text.slice(labelIdx + label.length + 1); const startFence = after.match(/\s*```json\s*/i); let rest = after; if (startFence) rest = after.slice(startFence[0].length); const braceStart = rest.indexOf("{"); if (braceStart >= 0) { let i = braceStart, depth = 0; for (; i < rest.length; i++) { const ch = rest[i]; if (ch === '{') depth++; else if (ch === '}') { depth--; if (depth === 0) { const jsonStr = rest.slice(braceStart, i + 1); try { return JSON.parse(jsonStr); } catch {} break; } } } } } const fenceMatches = text.match(/```json\s*([\s\S]*?)```/gi) || []; for (const m of fenceMatches) { const inner = m.replace(/```json/i,'').replace(/```$/,''); try { return JSON.parse(inner.trim()); } catch {} } const simple = text.match(/\{[\s\S]*\}/); if (simple) { try { return JSON.parse(simple[0]); } catch {} } return null; }
+        const summary = extractJsonBlock('JSON_SUMMARY', fb.content) || null;
+        const meals = extractJsonBlock('JSON_MEALS', fb.content) || { items: [] };
+        const hydration = extractJsonBlock('JSON_HYDRATION', fb.content) || { litros: 2 };
+        const beveragesPlan = extractJsonBlock('JSON_BEVERAGES', fb.content) || null;
+        return NextResponse.json({ advice: fb.content, summary, meals, hydration, beverages: beveragesPlan, model: fb.usedModel, took_ms: fb.genMs, fallback: true }, { status: 200 });
+      }
       return NextResponse.json({ pending: true }, { status: 202, headers: { 'Retry-After': '10' } });
     }
 
@@ -671,6 +699,13 @@ ${wantTypesText}`;
           const msg = String(error?.message || '');
           const isQuota = statusCode === 429 || /quota exceeded|RESOURCE_EXHAUSTED|generate_content_free_tier_requests/i.test(msg);
           const isOverloaded = statusCode === 503 || /overloaded|UNAVAILABLE/i.test(msg);
+          // Nuevo: clave inválida/filtrada -> fallback inmediato sin esperar ventana mínima
+          const isLeakedOrDenied = statusCode === 403 || /PERMISSION_DENIED|Your API key was reported as leaked|API key invalid/i.test(msg);
+          if (isLeakedOrDenied) {
+            console.warn(`[advice] API key inválida/denegada detectada (status=${statusCode}). Generando fallback local inmediato.`);
+            const fb = await generateFallbackContent();
+            return { text: fb.content, usedModel: fb.usedModel, genMs: fb.genMs, keyDenied: true };
+          }
           if (isQuota) {
             console.warn(`[advice] Modelo quota exceeded detected (status=${statusCode}). Generando fallback local inmediato.`);
             const fb = await generateFallbackContent();

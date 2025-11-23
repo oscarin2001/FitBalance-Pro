@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Calendar } from "@/components/ui/calendar";
 import WeeklyPlanByDay, { WeeklyDay } from "@/components/WeeklyPlanByDay";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -42,9 +43,11 @@ const ORDER_BASE: string[] = [
 ];
 
 export default function PlanPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<MealItem[]>([]);
   const [compliance, setCompliance] = useState<Record<string, boolean>>({});
+  const [variantCompliance, setVariantCompliance] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiEdit, setAiEdit] = useState<Record<string, { fromId: string; toId: string; loading: boolean }>>({});
@@ -254,10 +257,27 @@ export default function PlanPage() {
         const aiPlanJson = await aiPlanRes.json().catch(() => ({}));
         setItems(planJson.items || []);
         const map: Record<string, boolean> = {};
-        (compJson.items || []).forEach((r: ComplianceRow) => {
-          map[r.comida_tipo] = !!r.cumplido;
-        });
+        (compJson.items || []).forEach((r: ComplianceRow) => { map[r.comida_tipo] = !!r.cumplido; });
         setCompliance(map);
+        // Cargar estado por variante desde localStorage para la fecha
+        try {
+          if (typeof window !== 'undefined') {
+            const key = `plan_variant_compliance_${selectedDate}`;
+            const raw = localStorage.getItem(key);
+            const parsed = raw ? JSON.parse(raw) : null;
+            if (parsed && typeof parsed === 'object') {
+              setVariantCompliance(parsed);
+            } else {
+              // Si el backend trae Snack=true pero no hay estado por variante, inicializar ambas en false
+              // para evitar que aparezcan auto-marcadas.
+              if (map['Snack'] === true) {
+                setVariantCompliance({ Snack_manana: false, Snack_tarde: false } as any);
+              } else {
+                setVariantCompliance({});
+              }
+            }
+          }
+        } catch {}
         if (sumRes.ok) {
           setObjetivos(sumJson?.objetivos || null);
           setHidratacion(sumJson?.hidratacion || null);
@@ -443,9 +463,36 @@ export default function PlanPage() {
     return raw; // fallback sin tocar capitalización original
   }
 
+  // Tipo compatible con backend para compliance (colapsa variantes Snack_* a 'Snack')
+  function complianceTipo(raw: string): string {
+    if (!raw) return raw;
+    const t = raw.toLowerCase();
+    if (t.startsWith("snack")) return "Snack";
+    if (t === "desayuno") return "Desayuno";
+    if (t === "almuerzo") return "Almuerzo";
+    if (t === "cena") return "Cena";
+    return raw;
+  }
+
+  // Determina la variante específica de snack si aplica
+  function variantTipo(raw: string): "Snack_manana" | "Snack_tarde" | null {
+    if (!raw) return null;
+    const t = raw.toLowerCase();
+    if (!t.includes("snack")) return null;
+    if (/(mañana|manana)/.test(t)) return "Snack_manana";
+    if (/tarde/.test(t)) return "Snack_tarde";
+    return null;
+  }
+
   // Devuelve hora efectiva (prioriza fila -> variante -> genérico)
   function mealHour(tipo: string): string {
-    const base = presetHourForRow(tipo, 0) || presetHourFor(tipo) || "";
+    // Derivar índice por variante si es snack: mañana=0, tarde=1
+    let idx = 0;
+    const low = String(tipo || '').toLowerCase();
+    if (/snack/.test(low)) {
+      if (/tarde/.test(low)) idx = 1; else idx = 0;
+    }
+    const base = presetHourForRow(tipo, idx) || presetHourFor(tipo) || "";
     if (base && /^\d{2}:\d{2}$/.test(base)) return base;
     return "—";
   }
@@ -513,15 +560,19 @@ export default function PlanPage() {
     if (!showDetails) {
       setExpandedMeals(new Set());
     } else {
-      setExpandedMeals(new Set(selectedWeekdayMeals.map((m: any) => canonicalTipo(m.tipo))));
+      setExpandedMeals(new Set(selectedWeekdayMeals.map((m: any) => (variantTipo(m.tipo) ?? canonicalTipo(m.tipo)))));
     }
   }, [showDetails, selectedWeekdayMeals]);
 
   // Cumplimiento global del día
   const dayCompliance = useMemo(() => {
     if (!selectedWeekdayMeals.length) return false;
-    return selectedWeekdayMeals.every((m: any) => compliance[canonicalTipo(m.tipo)]);
-  }, [selectedWeekdayMeals, compliance]);
+    return selectedWeekdayMeals.every((m: any) => {
+      const v = variantTipo(m.tipo);
+      if (v) return !!variantCompliance[v];
+      return !!compliance[complianceTipo(m.tipo)];
+    });
+  }, [selectedWeekdayMeals, compliance, variantCompliance]);
 
   async function toggleDayCompliance() {
     if (!allowCompliance) { toast.info("No puedes marcar cumplimiento en un día futuro"); return; }
@@ -529,11 +580,30 @@ export default function PlanPage() {
     const all = dayCompliance;
     setSaving("__day_toggle");
     try {
+      const target = !all;
+      // Actualizar variantes localmente
+      setVariantCompliance((prev) => {
+        const next = { ...prev } as Record<string, boolean>;
+        const hasManana = selectedWeekdayMeals.some((m:any)=> canonicalTipo(m.tipo)==='Snack_manana');
+        const hasTarde = selectedWeekdayMeals.some((m:any)=> canonicalTipo(m.tipo)==='Snack_tarde');
+        if (hasManana) next['Snack_manana'] = target;
+        if (hasTarde) next['Snack_tarde'] = target;
+        try { if (typeof window !== 'undefined') localStorage.setItem(`plan_variant_compliance_${selectedDate}`, JSON.stringify(next)); } catch {}
+        return next;
+      });
+      // Enviar Snack como target si hay algún snack
+      if (selectedWeekdayMeals.some((m:any)=> /snack/i.test(m.tipo))) {
+        const effectiveHour = presetHourForRow('Snack', 0) || presetHourFor('Snack') || "12:00";
+        await fetch("/api/account/meal-plan/compliance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo: 'Snack', cumplido: target, date: selectedDate, hora: effectiveHour })
+        });
+      }
+      // Otras comidas
       for (const m of selectedWeekdayMeals) {
         const canonical = canonicalTipo(m.tipo);
-        const current = !!compliance[canonical];
-        const target = !all;
-        if (current === target) continue;
+        if (/snack/i.test(canonical)) continue;
         const k = hourKey(m.tipo, 0);
         const effectiveHour = rowHours[k] ?? presetHourForRow(m.tipo, 0) ?? "12:00";
         await fetch("/api/account/meal-plan/compliance", {
@@ -624,51 +694,51 @@ export default function PlanPage() {
     if (!allowCompliance) { toast.info("No puedes marcar cumplimiento en un día futuro"); return; }
     // Determinar hora efectiva para esta fila
     const k = hourKey(tipo, idx);
-    const effectiveHour = rowHours[k] ?? presetHourForRow(tipo, idx) ?? "";
-    if (!isValidHour(effectiveHour)) {
-      toast.error(`Ingresa la hora para ${tipo} antes de marcar como cumplido`);
-      return;
-    }
-    const variantTipo = variantTipoForSave(tipo, idx);
-    setSaving(tipo);
+    const effectiveHour = rowHours[k] ?? presetHourForRow(tipo, idx) ?? presetHourFor(tipo) ?? "12:00";
+    const tipoForSave = variantTipoForSave(tipo, idx);
+    const vKey = tipoForSave || tipo;
+    setSaving(vKey);
     try {
-      const canonical = canonicalTipo(tipo);
-      const newVal = !compliance[canonical];
-      const res = await fetch("/api/account/meal-plan/compliance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tipo: canonical, cumplido: newVal, date: selectedDate, hora: effectiveHour }),
-      });
-      if (!res.ok) throw new Error();
-      setCompliance((prev) => {
-      const next = { ...prev, [canonical]: newVal } as Record<string, boolean>;
-      // Persistir cumplimiento del día en localStorage como fallback para /dashboard
-      try {
-        if (typeof window !== 'undefined') {
-          const key = `plan_compliance_${selectedDate}`;
-          localStorage.setItem(key, JSON.stringify(next));
-          // Guardar también una copia "last" para fallback genérico
-          localStorage.setItem('plan_compliance_last', JSON.stringify({ date: selectedDate, map: next }));
+      const v = variantTipo(tipo);
+      const isSnackVar = !!v;
+      if (isSnackVar && v) {
+        // Actualizar UI local de la variante
+        const newValVar = !variantCompliance[v];
+        // Solo exigir hora válida al marcar como cumplido (true)
+        if (newValVar && !isValidHour(effectiveHour)) {
+          toast.error(`Ingresa la hora para ${tipo} antes de marcar como cumplido`);
+          return;
         }
-      } catch {}
-      return next as any;
-    });
-      // Notificar a otras vistas (p. ej., /dashboard) para refrescar el resumen
-      if (typeof window !== "undefined") {
-        // Emitir evento con payload mínimo para listeners opcionales
-        try {
-          const payload = { date: selectedDate };
-          window.dispatchEvent(new CustomEvent("meal:updated", { detail: payload }) as any);
-        } catch {
-          window.dispatchEvent(new Event("meal:updated"));
-        }
-      }
-      await saveHour(variantTipo, effectiveHour);
-    } catch {
-      // Fallback optimista: persistir igual en local y notificar al dashboard
-      try {
+        setVariantCompliance((prev) => {
+          const next = { ...prev, [v]: newValVar } as Record<string, boolean>;
+          try { if (typeof window !== 'undefined') localStorage.setItem(`plan_variant_compliance_${selectedDate}`, JSON.stringify(next)); } catch {}
+          return next;
+        });
+        // Backend: enviar Snack como OR de variantes
+        const otherKey = v === 'Snack_manana' ? 'Snack_tarde' : 'Snack_manana';
+        const otherVal = !!variantCompliance[otherKey];
+        const overall = newValVar || otherVal;
+        const res = await fetch("/api/account/meal-plan/compliance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo: 'Snack', cumplido: overall, date: selectedDate, hora: newValVar ? effectiveHour : "" }),
+        });
+        if (!res.ok) throw new Error();
+        setCompliance((prev) => ({ ...prev, ['Snack']: overall }));
+      } else {
         const canonical = canonicalTipo(tipo);
         const newVal = !compliance[canonical];
+        // Solo exigir hora al marcar como cumplido (true)
+        if (newVal && !isValidHour(effectiveHour)) {
+          toast.error(`Ingresa la hora para ${tipo} antes de marcar como cumplido`);
+          return;
+        }
+        const res = await fetch("/api/account/meal-plan/compliance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo: canonical, cumplido: newVal, date: selectedDate, hora: newVal ? effectiveHour : "" }),
+        });
+        if (!res.ok) throw new Error();
         setCompliance((prev) => {
           const next = { ...prev, [canonical]: newVal } as Record<string, boolean>;
           try {
@@ -680,6 +750,49 @@ export default function PlanPage() {
           } catch {}
           return next as any;
         });
+      }
+      // Notificar a otras vistas (p. ej., /dashboard) para refrescar el resumen
+      if (typeof window !== "undefined") {
+        // Emitir evento con payload mínimo para listeners opcionales
+        try {
+          const payload = { date: selectedDate };
+          window.dispatchEvent(new CustomEvent("meal:updated", { detail: payload }) as any);
+        } catch {
+          window.dispatchEvent(new Event("meal:updated"));
+        }
+      }
+      await saveHour(tipoForSave, effectiveHour);
+    } catch {
+      // Fallback optimista: persistir igual en local y notificar al dashboard
+      try {
+        const canonVar = canonicalTipo(tipo);
+        const isSnackVar = /snack/i.test(canonVar) && (canonVar === 'Snack_manana' || canonVar === 'Snack_tarde');
+        if (isSnackVar) {
+          const newValVar = !variantCompliance[canonVar];
+          setVariantCompliance((prev) => {
+            const next = { ...prev, [canonVar]: newValVar } as Record<string, boolean>;
+            try { if (typeof window !== 'undefined') localStorage.setItem(`plan_variant_compliance_${selectedDate}`, JSON.stringify(next)); } catch {}
+            return next;
+          });
+          const otherKey = canonVar === 'Snack_manana' ? 'Snack_tarde' : 'Snack_manana';
+          const otherVal = !!variantCompliance[otherKey];
+          const overall = newValVar || otherVal;
+          setCompliance((prev) => ({ ...prev, ['Snack']: overall }));
+        } else {
+          const canonical = canonicalTipo(tipo);
+          const newVal = !compliance[canonical];
+          setCompliance((prev) => {
+            const next = { ...prev, [canonical]: newVal } as Record<string, boolean>;
+            try {
+              if (typeof window !== 'undefined') {
+                const key = `plan_compliance_${selectedDate}`;
+                localStorage.setItem(key, JSON.stringify(next));
+                localStorage.setItem('plan_compliance_last', JSON.stringify({ date: selectedDate, map: next }));
+              }
+            } catch {}
+            return next as any;
+          });
+        }
         if (typeof window !== 'undefined') {
           try {
             const payload = { date: selectedDate };
@@ -880,6 +993,11 @@ export default function PlanPage() {
                 onClick={() => setShowMacros(v => !v)}
                 className="px-2 py-1 border rounded-md hover:bg-muted transition"
               >{showMacros ? 'Ocultar macros' : 'Mostrar macros'}</button>
+              <button
+                type="button"
+                onClick={() => setShowDetails(v => !v)}
+                className="px-2 py-1 border rounded-md hover:bg-muted transition"
+              >{showDetails ? 'Ocultar detalles' : 'Ver detalles'}</button>
             </div>
           )}
         </CardHeader>
@@ -892,64 +1010,52 @@ export default function PlanPage() {
             <div className="space-y-4">
               <ul className="space-y-3">
                 {selectedWeekdayMeals.map((m: any, i: number) => {
-                  const done = !!compliance[canonicalTipo(m.tipo)];
                   const full = mealItemFor(m.tipo);
+                  const v = variantTipo(m.tipo);
                   const canon = canonicalTipo(m.tipo);
-                  const expanded = expandedMeals.has(canon);
+                  const done = v ? !!variantCompliance[v] : !!compliance[complianceTipo(m.tipo)];
+                  const expanded = expandedMeals.has(v ?? canon);
                   const h = mealHour(m.tipo);
+                  const savingKey = (v ?? m.tipo) as string;
+                  let idxForToggle = 0;
+                  if (/snack/i.test(String(m.tipo))) {
+                    idxForToggle = /tarde/i.test(String(m.tipo)) ? 1 : 0;
+                  }
                   return (
                     <li key={i} className="border rounded-md p-3 flex flex-col gap-2 bg-background relative">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex flex-col flex-1 gap-1">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[11px] font-mono bg-muted px-2 py-0.5 rounded border">{h}</span>
-                              <span className="font-medium text-sm">{full?.receta?.nombre || m.receta?.nombre || m.tipo}</span>
-                              {showMacros && full?.receta?.macros && (
-                                <span className="text-[11px] text-muted-foreground flex gap-3 flex-wrap">
-                                  <span>Proteína {full.receta.macros.proteinas} g</span>
-                                  <span>Carbohidratos {full.receta.macros.carbohidratos} g</span>
-                                  <span>Grasas {full.receta.macros.grasas} g</span>
-                                  <span className="opacity-70">Calorías {full.receta.macros.kcal}</span>
-                                </span>
-                              )}
-                            </div>
-                            {/* check moved to actions absolute container to avoid overlap */}
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col flex-1 min-w-0 gap-1">
+                          <div className="flex items-start gap-2 flex-wrap min-w-0">
+                            <span className="text-[11px] font-mono bg-muted px-2 py-0.5 rounded border">{h}</span>
+                            <span className="font-medium text-sm break-words whitespace-normal">
+                              {full?.receta?.nombre || m.receta?.nombre || m.tipo}
+                            </span>
                           </div>
-                          {expanded && full?.receta?.alimentos && full.receta.alimentos.length > 0 && (
-                            <div className="mt-1 border rounded-md bg-muted/30 p-2">
-                              <ul className="text-[11px] space-y-1">
-                                {full.receta.alimentos.map((a: {id:number; nombre:string; gramos:number}) => (
-                                  <li key={a.id} className="flex justify-between gap-4">
-                                    <span className="truncate">{a.nombre}</span>
-                                    <span className="tabular-nums text-muted-foreground">{formatPortion(a.gramos)}</span>
-                                  </li>
-                                ))}
-                              </ul>
+                          {showMacros && full?.receta?.macros && (
+                            <div className="text-[11px] text-muted-foreground flex gap-3 flex-wrap break-words">
+                              <span>Proteína {full.receta.macros.proteinas} g</span>
+                              <span>Carbohidratos {full.receta.macros.carbohidratos} g</span>
+                              <span>Grasas {full.receta.macros.grasas} g</span>
+                              <span className="opacity-70">Calorías {full.receta.macros.kcal}</span>
                             </div>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => toggleMealExpanded(m.tipo)}
-                            className="self-start text-[11px] mt-1 underline text-muted-foreground hover:text-foreground"
-                          >{expanded ? 'Ocultar detalles' : 'Ver detalles'}</button>
                         </div>
-                        <div className="absolute top-3 right-3 flex flex-col items-center gap-2 min-w-[56px] md:min-w-[64px]" data-meal-menu>
+                        <div className="shrink-0 flex flex-row items-center gap-2 ml-auto self-start" data-meal-menu>
                           <div className="relative" data-meal-menu>
                             <button
                               type="button"
-                              onClick={() => setOpenMealMenu(openMealMenu === canon ? null : canon)}
-                              className="size-7 inline-flex items-center justify-center rounded-md border hover:bg-muted"
+                              onClick={() => setOpenMealMenu(openMealMenu === (v ?? canon) ? null : (v ?? canon))}
+                              className="h-11 w-11 inline-flex items-center justify-center rounded-md border hover:bg-muted"
                               aria-haspopup="true"
-                              aria-expanded={openMealMenu === canon}
+                              aria-expanded={openMealMenu === (v ?? canon)}
                             >
                               <MoreHorizontal className="size-4" />
                             </button>
-                            {openMealMenu === canon && (
+                            {openMealMenu === (v ?? canon) && (
                               <div className="absolute z-30 bg-popover border rounded-md p-1 shadow-md text-[12px] w-48 right-0 mt-2 md:right-full md:top-0 md:mr-2" data-meal-menu>
                                 <button
                                   type="button"
-                                  onClick={() => { window.open('/account/profile/meals', '_blank'); setOpenMealMenu(null); }}
+                                  onClick={() => { router.push('/account/profile/meals'); setOpenMealMenu(null); }}
                                   className="w-full text-left px-2 py-1 rounded hover:bg-muted"
                                 >Modificar horario</button>
                                 {weeklyPlan && weeklyPlan.length > 0 && (
@@ -964,9 +1070,9 @@ export default function PlanPage() {
                           </div>
                           <button
                             type="button"
-                            onClick={() => toggle(m.tipo as any, 0)}
-                            disabled={!allowCompliance || saving === m.tipo}
-                            className={`size-6 inline-flex items-center justify-center rounded border text-xs transition ${done ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-muted border-muted-foreground/20'} disabled:opacity-40`}
+                            onClick={() => toggle(m.tipo as any, idxForToggle)}
+                            disabled={!allowCompliance || saving === savingKey}
+                            className={`h-11 w-11 inline-flex items-center justify-center rounded border text-xs transition ${done ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-muted border-muted-foreground/20'} disabled:opacity-40`}
                             aria-pressed={done}
                             aria-label={done ? 'Desmarcar comida' : 'Marcar comida cumplida'}
                           >
@@ -974,6 +1080,18 @@ export default function PlanPage() {
                           </button>
                         </div>
                       </div>
+                      {expanded && full?.receta?.alimentos && full.receta.alimentos.length > 0 && (
+                        <div className="mt-2 border rounded-md bg-muted/30 p-2">
+                          <ul className="text-[11px] space-y-1">
+                            {full.receta.alimentos.map((a: {id:number; nombre:string; gramos:number}) => (
+                              <li key={a.id} className="flex justify-between gap-4">
+                                <span className="break-words whitespace-normal">{a.nombre}</span>
+                                <span className="tabular-nums text-muted-foreground">{formatPortion(a.gramos)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </li>
                   );
                 })}
@@ -1053,7 +1171,7 @@ export default function PlanPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => window.open('/account/profile/meals','_blank')}
+                  onClick={() => router.push('/account/profile/meals')}
                   className="h-8 px-3 rounded-md border text-xs hover:bg-muted"
                 >Editar horarios</button>
                 <button

@@ -27,9 +27,89 @@ function num(n: any): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+// Fusiona campos de summary faltantes usando los bloques JSON del texto (si existen)
+function mergeSummaryFromText(sum: any | null, text: string) {
+  try {
+    const parsed = tryParseAdviceJson(text);
+    if (parsed?.summary && typeof parsed.summary === 'object') {
+      return { ...(sum || {}), ...(parsed.summary || {}) };
+    }
+  } catch {}
+  return sum;
+}
+
+// Extrae un bloque JSON etiquetado manejando formato con o sin ```json fences
+function extractJsonBlock(label: string, text: string): any | null {
+  try {
+    if (!text) return null;
+    const idx = text.indexOf(label + ":");
+    if (idx >= 0) {
+      const after = text.slice(idx + label.length + 1);
+      const startFence = after.match(/\s*```json\s*/i);
+      let rest = after;
+      if (startFence) rest = after.slice(startFence[0].length);
+      const braceStart = rest.indexOf("{");
+      if (braceStart >= 0) {
+        let i = braceStart, depth = 0;
+        for (; i < rest.length; i++) {
+          const ch = rest[i];
+          if (ch === '{') depth++;
+          else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+              const jsonStr = rest.slice(braceStart, i + 1);
+              try { return JSON.parse(jsonStr); } catch { break; }
+            }
+          }
+        }
+      }
+    }
+    // Fallback: tomar el primer bloque ```json ... ```
+    const fenceMatches = text.match(/```json\s*([\s\S]*?)```/gi) || [];
+    for (const m of fenceMatches) {
+      const inner = m.replace(/```json/i,'').replace(/```$/,'');
+      try { return JSON.parse(inner.trim()); } catch {}
+    }
+    // Último recurso: primer objeto en el texto
+    const simple = text.match(/\{[\s\S]*\}/);
+    if (simple) { try { return JSON.parse(simple[0]); } catch {} }
+    return null;
+  } catch { return null; }
+}
+
+// Intenta extraer bloques JSON_* desde el texto largo del consejo
+function tryParseAdviceJson(text: string): { summary?: any; meals?: any; hydration?: any; beverages?: any; variants?: any } | null {
+  try {
+    const out: any = {};
+    // Intento 1: bloques específicos por etiqueta
+    let sum = extractJsonBlock('JSON_SUMMARY', text);
+    let meals = extractJsonBlock('JSON_MEALS', text);
+    let hyd = extractJsonBlock('JSON_HYDRATION', text);
+    let bev = extractJsonBlock('JSON_BEVERAGES', text);
+    let vars = extractJsonBlock('JSON_MEALS_VARIANTS', text);
+
+    // Intento 2: si alguno vino nulo, probar con un bloque envolvente (primer ```json ...```) que contenga claves JSON_*
+    const wrapper = extractJsonBlock('JSON_WRAPPER_FALLBACK', text);
+    if (wrapper && typeof wrapper === 'object') {
+      if (!sum && wrapper.JSON_SUMMARY) sum = wrapper.JSON_SUMMARY;
+      if (!meals && wrapper.JSON_MEALS) meals = wrapper.JSON_MEALS;
+      if (!hyd && wrapper.JSON_HYDRATION) hyd = wrapper.JSON_HYDRATION;
+      if (!bev && wrapper.JSON_BEVERAGES) bev = wrapper.JSON_BEVERAGES;
+      if (!vars && (wrapper.JSON_MEALS_VARIANTS || wrapper.JSON_VARIANTS)) vars = (wrapper.JSON_MEALS_VARIANTS || wrapper.JSON_VARIANTS);
+    }
+
+    if (sum) out.summary = sum;
+    if (meals) out.meals = meals;
+    if (hyd) out.hydration = hyd;
+    if (bev) out.beverages = bev;
+    if (vars) out.variants = vars;
+    return Object.keys(out).length ? out : null;
+  } catch { return null; }
+}
+
 function normalizeSummary(raw: any | null, profile?: any | null) {
-  if (!raw || typeof raw !== 'object') return null as any;
-  const s: any = { ...raw };
+  // Permitir derivación aún cuando no haya 'raw' (tomar del perfil)
+  const s: any = (raw && typeof raw === 'object') ? { ...raw } : {};
   const pick = (...keys: string[]) => {
     for (const k of keys) {
       const v = (s as any)[k];
@@ -41,12 +121,36 @@ function normalizeSummary(raw: any | null, profile?: any | null) {
   const out: any = {};
   out.tmb = pick('tmb','TMB','TMB_kcal','tmb_kcal');
   out.tdee = pick('tdee','TDEE','tdee_kcal','TDEE_kcal');
-  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo');
+  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo','ingesta_calorica_recomendada_kcal');
   out.deficit_superavit_kcal = pick('deficit_superavit_kcal','deficit_kcal','superavit_kcal','deficit');
-  out.ritmo_peso_kg_sem = pick('ritmo_peso_kg_sem','ritmo_kg_sem','rate_kg_week');
+  out.ritmo_peso_kg_sem = pick('ritmo_peso_kg_sem','ritmo_kg_sem','rate_kg_week','proyeccion_cambio_semanal_kg');
   out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g');
   out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g');
   out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g');
+
+  // Derivar TDEE desde el perfil si falta
+  if (out.tdee == null && profile && typeof profile === 'object') {
+    const kg = num((profile as any).peso_kg ?? (profile as any).weight_kg ?? (profile as any).weight);
+    const cm = num((profile as any).altura_cm ?? (profile as any).estatura_cm ?? (profile as any).height_cm ?? (profile as any).height);
+    const age = num((profile as any).edad ?? (profile as any).age);
+    const sexRaw = String((profile as any).sexo ?? (profile as any).sex ?? '').toLowerCase();
+    const male = /m|masc|hombre/.test(sexRaw);
+    if (kg != null && cm != null && age != null) {
+      // Mifflin-St Jeor
+      const bmr = male ? (10 * kg + 6.25 * cm - 5 * age + 5) : (10 * kg + 6.25 * cm - 5 * age - 161);
+      // Factor de actividad básico
+      const actRaw = String((profile as any).actividad ?? (profile as any).nivel_actividad ?? (profile as any).activity_level ?? '').toLowerCase();
+      let factor = 1.4;
+      if (/sedent/.test(actRaw)) factor = 1.2;
+      else if (/liger|light/.test(actRaw)) factor = 1.375;
+      else if (/moderad/.test(actRaw)) factor = 1.55;
+      else if (/alto|intens|heavy/.test(actRaw)) factor = 1.725;
+      else if (/muy alto|athlete|extrem/.test(actRaw)) factor = 1.9;
+      out.tdee = Math.round(bmr * factor);
+      // Si no había TMB, aprox con BMR
+      if (out.tmb == null) out.tmb = Math.round(bmr);
+    }
+  }
 
   // 1) Completar kcal si hay TDEE y déficit/superávit
   if (out.kcal_objetivo == null && out.tdee != null && out.deficit_superavit_kcal != null) {
@@ -291,7 +395,12 @@ export default function OnboardingAdvicePage() {
   const [weekly, setWeekly] = useState<any | null>(null);
   const [loadingWeekly, setLoadingWeekly] = useState<boolean>(true);
   // Summary normalizado para uso consistente (PDF, vista semanal, persistencia)
-  const normSummary = useMemo(() => normalizeSummary(summary, profile), [summary, profile]);
+  const normSummary = useMemo(() => {
+    const raw = (summary && typeof summary === 'object')
+      ? (summary.summary || summary.objetivos || summary)
+      : summary;
+    return normalizeSummary(raw, profile);
+  }, [summary, profile]);
   const [proposals, setProposals] = useState<any[] | null>(null);
   const [schedule, setSchedule] = useState<Record<string, string> | null>(null);
   const [showBaseProposals, setShowBaseProposals] = useState<boolean>(false);
@@ -307,9 +416,16 @@ export default function OnboardingAdvicePage() {
   const intervalRef = useRef<any>(null);
   // Evitar doble envío al finalizar
   const [finishing, setFinishing] = useState(false);
-  // Modo estricto activado en onboarding para evitar fallbacks
-  // strictMode: antes estaba forzado a true, lo relajamos a false para permitir mostrar fallback IA en lugar de dejar la tarjeta vacía.
-  const strictMode = false;
+  // Modo estricto: si la URL trae ai_strict=1, no forzamos fallback del lado cliente
+  const [aiStrict, setAiStrict] = useState<boolean>(true);
+  const [pdfDebug, setPdfDebug] = useState<boolean>(false);
+  useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      setAiStrict(u.searchParams.get('ai_strict') === '1');
+      setPdfDebug(u.searchParams.get('pdfDebug') === '1');
+    } catch {}
+  }, []);
   // Construir URL del endpoint con flags + propagación de params de la página
   function buildAdviceUrl() {
     try {
@@ -322,6 +438,14 @@ export default function OnboardingAdvicePage() {
       params.set('ensureFull', '0');
       params.set('maxTokens', '3072');
       params.set('preferAlt', '1');
+      // Timeouts ampliados para dar tiempo a la IA
+      params.set('flashMs', '60000');
+      params.set('longMs', '120000');
+      params.set('fallbackMs', '45000');
+      // Pide al servidor esperar al menos 4 min antes de permitir fallback local
+      params.set('minFallbackMs', '240000');
+      // Forzar el modelo que te funciona si no viene en la URL actual
+      if (!params.has('model')) params.set('model', 'models/gemini-2.0-flash');
       if (!params.has('alt')) params.set('alt', 'models/gemini-2.0-flash');
       params.delete('forceLong');
       base.search = params.toString();
@@ -356,9 +480,9 @@ export default function OnboardingAdvicePage() {
   }
   // Construir vista previa efímera a partir de mealItems (AI) si no hay weekly.weekly o para reemplazar cualquier plan previo guardado.
   const ephemeralWeekly = useMemo(() => {
-    // Construye un plan semanal rotado SOLO en memoria partiendo de mealItems (AI).
+    // Construye un plan semanal rotado SOLO en memoria partiendo de mealItems (IA) o, si no hay,
+    // de un set mínimo generado localmente según enabledMeals del perfil.
     const hasVariants = mealVariants && typeof mealVariants === 'object' && Object.keys(mealVariants).length > 0;
-    if (!hasVariants && (!Array.isArray(mealItems) || mealItems.length === 0)) return null;
 
     // Heurística para medidas caseras (similar a weekly-proposals backend) para mostrar peso y medida.
     function householdMeasure(name: string, grams: number) {
@@ -389,6 +513,9 @@ export default function OnboardingAdvicePage() {
     const snackManana = enabledMeals?.snack_manana || enabledMeals?.["snack_mañana"] || false;
     const snackTarde = enabledMeals?.snack_tarde || false;
     const separateSnacks = snackManana && snackTarde;
+    // Normalized flags used later
+    const wantsSnackManana = Boolean(snackManana);
+    const wantsSnackTarde  = Boolean(snackTarde);
 
     // Agrupar por tipo para poder rotar. Si hay 2 snacks distintos y la IA entregó items tipo "Snack",
     // asignar alternadamente Snack_manana / Snack_tarde. Priorizar variantes de la IA si existen.
@@ -414,13 +541,87 @@ export default function OnboardingAdvicePage() {
       }
     }
 
+    // Si seguimos sin items (IA no entregó JSON_MEALS ni variantes), intentar parsear el texto largo del consejo
+    if (!Object.keys(mealsByType).length && typeof text === 'string' && text.trim().length) {
+      try {
+        const lines = text.replace(/\r\n/g,'\n').split('\n');
+        const dayHeader = /^\s*(D[ií]A|DIA)\s*\d+/i;
+        const mealHeader = /\b(Desayuno|Almuerzo|Comida|Cena|Snack\s*1|Snack\s*2|Snack)\s*:/i;
+        type TmpMeal = { tipo: string; nombre: string; ingredientes: { nombre: string; gramos?: number }[] };
+        const tmp: Record<string, TmpMeal[]> = {};
+        let currentMeal: TmpMeal | null = null;
+        for (let i=0;i<lines.length;i++) {
+          const ln = lines[i].trim();
+          if (!ln) continue;
+          if (dayHeader.test(ln)) { currentMeal = null; continue; }
+          // Detectar encabezados de comida tipo "• Desayuno: Nombre ..." o "- Cena: ..."
+          const headMatch = ln.match(/^[•\-*\u2022\s]*\s*(Desayuno|Almuerzo|Comida|Cena|Snack(?:\s*\d+)?)\s*:\s*(.+)$/i);
+          if (headMatch) {
+            let tipo = headMatch[1];
+            const nombre = headMatch[2].trim();
+            if (/comida/i.test(tipo)) tipo = 'Almuerzo';
+            if (/snack/i.test(tipo)) {
+              if (separateSnacks) tipo = !tmp['Snack_manana'] || (tmp['Snack_manana']||[]).length <= (tmp['Snack_tarde']||[]).length ? 'Snack_manana' : 'Snack_tarde';
+              else tipo = 'Snack';
+            }
+            currentMeal = { tipo, nombre, ingredientes: [] };
+            if (!tmp[tipo]) tmp[tipo] = [];
+            tmp[tipo].push(currentMeal);
+            continue;
+          }
+          // Capturar ingredientes básicos en líneas que empiecen con "* "
+          if (currentMeal && /^\*\s+/.test(ln)) {
+            const raw = ln.replace(/^\*\s+/, '').trim();
+            // Extraer nombre y gramos aproximados si los hay
+            const gramsMatch = raw.match(/(\d{2,4})\s*g\b/i);
+            const nombre = raw.replace(/\([^)]*\)/g,'').replace(/\d+\s*g/ig,'').replace(/\s{2,}/g,' ').trim().replace(/^[\-•]\s*/, '');
+            const gramos = gramsMatch ? Number(gramsMatch[1]) : undefined;
+            currentMeal.ingredientes.push({ nombre, gramos });
+            continue;
+          }
+          // Si viene otra viñeta o separador, terminar ingredientes
+          if (/^---+$/.test(ln)) { currentMeal = null; continue; }
+        }
+        // Pasar tmp a mealsByType si se detectó algo
+        const keys = Object.keys(tmp);
+        if (keys.length) {
+          for (const k of keys) {
+            const list = tmp[k].filter(Boolean);
+            if (list.length) mealsByType[k] = list as any[];
+          }
+        }
+      } catch {}
+    }
+
+    // Si seguimos sin items (IA no entregó JSON_MEALS ni variantes, ni se pudo parsear texto), generar un set mínimo por tipo requerido
+    if (!Object.keys(mealsByType).length) {
+      const mk = (tipo: string, nombre: string, ings: any[]) => ({ tipo, nombre, porciones: 1, ingredientes: ings });
+      const basicFor = (t: string) => {
+        if (t === 'Desayuno') return mk('Desayuno', 'Desayuno básico', [ { nombre: 'Huevo', gramos: 120 }, { nombre: 'Fruta', gramos: 120 }, { nombre: 'Frutos secos', gramos: 15 } ]);
+        if (t === 'Almuerzo') return mk('Almuerzo', 'Almuerzo básico', [ { nombre: 'Pollo', gramos: 120 }, { nombre: 'Arroz', gramos: 90 }, { nombre: 'Verduras', gramos: 120 }, { nombre: 'Aceite de oliva', gramos: 10 } ]);
+        if (t === 'Cena') return mk('Cena', 'Cena básica', [ { nombre: 'Pescado', gramos: 120 }, { nombre: 'Quinua', gramos: 90 }, { nombre: 'Ensalada', gramos: 150 }, { nombre: 'Aceite de oliva', gramos: 10 } ]);
+        return mk('Snack', 'Snack básico', [ { nombre: 'Yogur', gramos: 180 }, { nombre: 'Fruta', gramos: 120 } ]);
+      };
+      const req: string[] = [];
+      if (enabledMeals?.desayuno) req.push('Desayuno');
+      if (enabledMeals?.almuerzo) req.push('Almuerzo');
+      if (enabledMeals?.cena) req.push('Cena');
+      if (wantsSnackManana && wantsSnackTarde) { req.push('Snack_manana','Snack_tarde'); }
+      else if (wantsSnackManana || wantsSnackTarde) { req.push('Snack'); }
+      if (req.length === 0) req.push('Desayuno','Almuerzo','Cena','Snack');
+      req.forEach(t => {
+        const key = t;
+        const base = t === 'Snack_manana' || t === 'Snack_tarde' ? 'Snack' : t;
+        const item = basicFor(base);
+        mealsByType[key] = [item];
+      });
+    }
+
     // Normalización: asegurar que los tipos requeridos por enabledMeals existan como buckets
     const requiredTypes: string[] = [];
     if (enabledMeals?.desayuno) requiredTypes.push('Desayuno');
     if (enabledMeals?.almuerzo) requiredTypes.push('Almuerzo');
     if (enabledMeals?.cena) requiredTypes.push('Cena');
-    const wantsSnackManana = Boolean(enabledMeals?.snack_manana || enabledMeals?.['snack_mañana']);
-    const wantsSnackTarde  = Boolean(enabledMeals?.snack_tarde);
     if (wantsSnackManana && wantsSnackTarde) {
       requiredTypes.push('Snack_manana','Snack_tarde');
     } else if (wantsSnackManana || wantsSnackTarde) {
@@ -650,7 +851,31 @@ export default function OnboardingAdvicePage() {
       });
       return { day, active: true, meals: mealsForDay };
     });
-  }, [mealItems, normSummary, profile, mealVariants]);
+  }, [mealItems, normSummary, profile, mealVariants, text]);
+
+  // Fijar hidratación por defecto si vino nula pero ya tenemos summary
+  useEffect(() => {
+    if (hydrationLiters == null && normSummary) {
+      const litros = normSummary?.kcal_objetivo ? Math.max(1.5, Math.min(4, Math.round(((normSummary.kcal_objetivo as number)/1000)*10)/10)) : 2.0;
+      setHydrationLiters(litros);
+    }
+  }, [hydrationLiters, normSummary]);
+
+  // Al terminar de cargar el consejo, si ya tenemos un weekly efímero o persistido, dejar de mostrar loadingWeekly
+  useEffect(() => {
+    if (!loading) {
+      if (Array.isArray(ephemeralWeekly) && ephemeralWeekly.length) {
+        if (loadingWeekly) setLoadingWeekly(false);
+      } else if (weekly && Array.isArray(weekly.weekly) && weekly.weekly.length) {
+        if (loadingWeekly) setLoadingWeekly(false);
+      }
+    }
+  }, [loading, loadingWeekly, ephemeralWeekly, weekly]);
+
+  // Si hay error también detener el loadingWeekly para que aparezca el estado vacío y no quede bloqueado
+  useEffect(() => {
+    if (error) setLoadingWeekly(false);
+  }, [error]);
 
   // Lanzar fetch inicial del consejo con progreso sintético
   useEffect(() => {
@@ -694,6 +919,8 @@ export default function OnboardingAdvicePage() {
 
     async function fetchAdvice() {
       setError(null);
+      // Mantener barra de carga si entramos en modo polling (202)
+      let startedPolling = false;
       try {
         const res = await fetch(buildAdviceUrl(), { method: "POST" });
         const json = await res.json().catch(() => ({}));
@@ -706,7 +933,33 @@ export default function OnboardingAdvicePage() {
         if (res.status === 202 && (json?.started || json?.pending)) {
           // Polling robusto: respetar Retry-After si lo devuelve el servidor y aplicar backoff exponencial
             const pollStart = performance.now();
+            startedPolling = true; // evitar ocultar la barra en finally
             let pollAttempts = 0;
+            // Intentar obtener contenido fallback pero NO inmediato: esperar ~60s (solo si no estamos en modo estricto)
+            const fallbackTimer = setTimeout(async () => {
+              if (cancelled) return;
+              if (aiStrict) return; // no forzar fallback en modo estricto
+              // Si ya tenemos contenido, no forzar fallback
+              const hasContent = (text && text.length) || summary || (Array.isArray(mealItems) && mealItems.length);
+              if (hasContent) return;
+              try {
+                const forced = await fetch(buildAdviceUrl() + (buildAdviceUrl().includes('?') ? '&' : '?') + 'minFallbackMs=0', { method: 'POST' });
+                const jf = await forced.json().catch(() => ({}));
+                if (forced.ok) {
+                  if (typeof jf?.advice === 'string') setText(jf.advice);
+                  if (jf?.summary || jf?.advice) setSummary(mergeSummaryFromText(jf?.summary ?? null, jf?.advice || ""));
+                  const itemsF0 = jf?.meals?.items; if (Array.isArray(itemsF0) && itemsF0.length) setMealItems(itemsF0);
+                  const variantsF0 = jf?.meals?.variants; if (variantsF0 && typeof variantsF0 === 'object') setMealVariants(variantsF0);
+                  const litrosF0 = jf?.hydration?.litros; if (typeof litrosF0 === 'number' && litrosF0 > 0) { setHydrationLiters(litrosF0); } else {
+                    const parsed = tryParseAdviceJson(jf?.advice || "");
+                    const lAlt = parsed?.hydration?.litros; if (typeof lAlt === 'number' && lAlt > 0) setHydrationLiters(lAlt);
+                  }
+                  const bevsF0 = jf?.beverages?.items; if (Array.isArray(bevsF0) && bevsF0.length) setRawBeverages(bevsF0);
+                }
+              } catch {}
+            }, 60000);
+            // Cancelar el timer si se desmonta
+            if (cancelled) clearTimeout(fallbackTimer);
             async function poll() {
               if (cancelled) return;
               try {
@@ -715,30 +968,55 @@ export default function OnboardingAdvicePage() {
                 // Si ya está completado, procesar y salir
                 if (r2.ok && !j2.started && !j2.pending) {
                   if (!cancelled) {
-                    if (j2.fallback) {
-                      setError('Contenido parcial (fallback). Puedes reintentar para enriquecerlo.');
-                    }
+                    const wasFallback = !!j2.fallback;
                     setText(j2.advice || "");
-                    setSummary(j2.summary ?? null);
+                    setSummary(mergeSummaryFromText(j2.summary ?? null, j2.advice || ""));
                     const items = j2.meals?.items;
                     setMealItems(Array.isArray(items) && items.length ? items : null);
                     const variants = j2.meals?.variants;
                     setMealVariants(variants && typeof variants === 'object' ? variants : null);
                     const litros = j2.hydration?.litros;
-                    setHydrationLiters(typeof litros === "number" && litros > 0 ? litros : null);
+                    if (typeof litros === "number" && litros > 0) setHydrationLiters(litros); else {
+                      const parsed = tryParseAdviceJson(j2.advice || "");
+                      const lAlt = parsed?.hydration?.litros; if (typeof lAlt === 'number' && lAlt > 0) setHydrationLiters(lAlt);
+                    }
                     const bevs = j2.beverages?.items;
                     setRawBeverages(Array.isArray(bevs) && bevs.length ? bevs : null);
                     setLoading(false);
                     setProgress(100);
                     setEtaSec(0);
+                    if (wasFallback) {
+                      setError('Contenido parcial (fallback). Puedes reintentar para enriquecerlo.');
+                    }
                   }
                   return;
                 }
 
-                // Si excede el tiempo máximo de polling, abortar
-                if (performance.now() - pollStart > 60000) {
+                // Si excede el tiempo máximo de polling, forzar fallback inmediato y terminar
+                if (performance.now() - pollStart > 300000) {
                   if (!cancelled) {
-                    setError('La generación está tardando demasiado. Puedes reintentar.');
+                    try {
+                      if (aiStrict) { setError('La generación está tardando demasiado. Puedes reintentar.'); setLoading(false); setEtaSec(0); return; }
+                      const forced = await fetch(buildAdviceUrl() + (buildAdviceUrl().includes('?') ? '&' : '?') + 'minFallbackMs=0', { method: 'POST' });
+                      const jf = await forced.json().catch(() => ({}));
+                      if (forced.ok) {
+                        setText(jf.advice || "");
+                        setSummary(mergeSummaryFromText(jf.summary ?? null, jf.advice || ""));
+                        const itemsF = jf.meals?.items;
+                        setMealItems(Array.isArray(itemsF) && itemsF.length ? itemsF : null);
+                        const litrosF = jf.hydration?.litros;
+                        if (typeof litrosF === 'number' && litrosF > 0) setHydrationLiters(litrosF); else {
+                          const parsed = tryParseAdviceJson(jf.advice || "");
+                          const lAlt = parsed?.hydration?.litros; if (typeof lAlt === 'number' && lAlt > 0) setHydrationLiters(lAlt);
+                        }
+                        const bevsF = jf.beverages?.items;
+                        setRawBeverages(Array.isArray(bevsF) && bevsF.length ? bevsF : null);
+                      } else {
+                        setError('La generación está tardando demasiado. Puedes reintentar.');
+                      }
+                    } catch {
+                      setError('La generación está tardando demasiado. Puedes reintentar.');
+                    }
                     setLoading(false);
                     setEtaSec(0);
                   }
@@ -785,25 +1063,89 @@ export default function OnboardingAdvicePage() {
           throw new Error(json?.error || "AI error");
         }
         if (!cancelled) {
-          if (json.fallback) {
-            setError('Contenido parcial (fallback). Puedes reintentar para versión más completa.');
-          }
-          setText(json.advice || "");
-          setSummary(json.summary ?? null);
-          const items = json.meals?.items;
-          setMealItems(Array.isArray(items) && items.length ? items : null);
-          const variants = json.meals?.variants;
-          setMealVariants(variants && typeof variants === 'object' ? variants : null);
-          const litros = json.hydration?.litros;
-          setHydrationLiters(typeof litros === "number" && litros > 0 ? litros : null);
-          const bevs = json.beverages?.items;
-          setRawBeverages(Array.isArray(bevs) && bevs.length ? bevs : null);
-          if (json.cached) {
-            // Ajustar progreso instantáneo para cache
+          const jsonWasFallback = !!json.fallback;
+          // Si llegó 200 pero sin contenido útil, considerar como aún pendiente y reintentar breve polling
+          const missingAll = !json?.advice && !json?.summary && !(json?.meals && Array.isArray(json?.meals?.items) && json?.meals?.items?.length);
+          if (missingAll) {
+            startedPolling = true; // mantener loader
+            let retries = 0;
+            const repollStart = performance.now();
+            const repoll = async () => {
+              if (cancelled) return;
+              try {
+                const r = await fetch(buildAdviceUrl(), { method: 'POST' });
+                const j = await r.json().catch(() => ({}));
+                if (r.ok && (j?.advice || j?.summary || (j?.meals && Array.isArray(j?.meals?.items) && j?.meals?.items?.length))) {
+                  setText(j.advice || "");
+                  setSummary(mergeSummaryFromText(j.summary ?? null, j.advice || ""));
+                  const items2 = j.meals?.items;
+                  setMealItems(Array.isArray(items2) && items2.length ? items2 : null);
+                  const variants2 = j.meals?.variants;
+                  setMealVariants(variants2 && typeof variants2 === 'object' ? variants2 : null);
+                  const litros2 = j.hydration?.litros;
+                  if (typeof litros2 === "number" && litros2 > 0) setHydrationLiters(litros2); else {
+                    const parsed = tryParseAdviceJson(j.advice || "");
+                    const lAlt = parsed?.hydration?.litros; if (typeof lAlt === 'number' && lAlt > 0) setHydrationLiters(lAlt);
+                  }
+                  const bevs2 = j.beverages?.items;
+                  setRawBeverages(Array.isArray(bevs2) && bevs2.length ? bevs2 : null);
+                  setLoading(false);
+                  setProgress(100);
+                  setEtaSec(0);
+                  return;
+                }
+              } catch {}
+              retries += 1;
+              // Esperar con backoff suave hasta ~60s en total antes de forzar fallback
+              const elapsed = performance.now() - repollStart;
+              if (elapsed < 60000 && !cancelled) {
+                const delay = Math.min(5000, 1000 + retries * 800); // 1.8s, 2.6s, ... máx 5s
+                setTimeout(repoll, delay);
+              } else if (!cancelled) {
+                // como último recurso, forzar fallback inmediato en servidor (si no es modo estricto)
+                try {
+                  if (aiStrict) { setError('La generación está tardando demasiado. Puedes reintentar.'); setLoading(false); setProgress(100); setEtaSec(0); return; }
+                  const forced = await fetch(buildAdviceUrl() + (buildAdviceUrl().includes('?') ? '&' : '?') + 'minFallbackMs=0', { method: 'POST' });
+                  const jf = await forced.json().catch(() => ({}));
+                  setText(jf.advice || "");
+                  setSummary(jf.summary ?? null);
+                  const items3 = jf.meals?.items;
+                  setMealItems(Array.isArray(items3) && items3.length ? items3 : null);
+                  const litros3 = jf.hydration?.litros;
+                  setHydrationLiters(typeof litros3 === "number" && litros3 > 0 ? litros3 : null);
+                  const bevs3 = jf.beverages?.items;
+                  setRawBeverages(Array.isArray(bevs3) && bevs3.length ? bevs3 : null);
+                } catch {}
+                setLoading(false);
+                setProgress(100);
+                setEtaSec(0);
+              }
+            };
+            setTimeout(repoll, 800);
+          } else {
+            setText(json.advice || "");
+            setSummary(json.summary ?? null);
+            const items = json.meals?.items;
+            setMealItems(Array.isArray(items) && items.length ? items : null);
+            const variants = json.meals?.variants;
+            setMealVariants(variants && typeof variants === 'object' ? variants : null);
+            const litros = json.hydration?.litros;
+            setHydrationLiters(typeof litros === "number" && litros > 0 ? litros : null);
+            const bevs = json.beverages?.items;
+            setRawBeverages(Array.isArray(bevs) && bevs.length ? bevs : null);
+            // En éxito directo, cerrar loader aquí
+            setLoading(false);
             setProgress(100);
             setEtaSec(0);
-          } else if (typeof json.took_ms === 'number') {
-            try { localStorage.setItem('advice_last_ms', String(json.took_ms)); } catch {}
+            if (jsonWasFallback) {
+              setError('Contenido parcial (fallback). Puedes reintentar para versión más completa.');
+            }
+            if (json.cached) {
+              // Ajustar progreso instantáneo para cache
+              // ya ajustado arriba; mantener por claridad
+            } else if (typeof json.took_ms === 'number') {
+              try { localStorage.setItem('advice_last_ms', String(json.took_ms)); } catch {}
+            }
           }
         }
       } catch (e:any) {
@@ -812,17 +1154,17 @@ export default function OnboardingAdvicePage() {
           setText("No se pudo generar el consejo en este momento.");
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-          // completar progreso a 100 de forma suave
-          setProgress(p => p < 100 ? 100 : p);
-          setEtaSec(0);
-        }
+        // No cambiar loading aquí. El loader debe permanecer visible mientras haya polling
+        // o hasta que hayamos establecido contenido o error en ramas superiores.
       }
     }
 
-    // Prefetch en background para permitir cache si tarda
-    try { fetch('/api/account/advice?prefetch=1', { method: 'POST' }); } catch {}
+    // Prefetch en background para permitir cache si tarda (mismos parámetros que la petición principal)
+    try {
+      const base = buildAdviceUrl();
+      const prefetchUrl = base + (base.includes('?') ? '&' : '?') + 'prefetch=1';
+      fetch(prefetchUrl, { method: 'POST' });
+    } catch {}
     // Ejecutar en paralelo: no esperes a perfil/schedule para comenzar IA
     Promise.allSettled([loadProfileAndSchedule(), fetchAdvice()]);
 
@@ -1284,8 +1626,45 @@ export default function OnboardingAdvicePage() {
 
       // Resumen estructurado (si existe)
       let cursorY = margin + 40;
-      if (summary) {
-        const s: any = normSummary || summary;
+      if (summary || normSummary) {
+        // Construir 's' preferiendo valores normalizados SOLO cuando existan,
+        // sin sobrescribir con null/undefined los valores del summary original.
+        const s: any = { ...(summary || {}) };
+        if (normSummary && typeof normSummary === 'object') {
+          for (const k of Object.keys(normSummary)) {
+            const v = (normSummary as any)[k];
+            if (v != null) (s as any)[k] = v;
+          }
+        }
+        // Fallback adicional: fusionar desde bloques JSON del texto actual
+        try {
+          const parsed = tryParseAdviceJson(text || "");
+          if (parsed?.summary && typeof parsed.summary === 'object') {
+            for (const [k, v] of Object.entries(parsed.summary)) {
+              if (v != null && (s as any)[k] == null) { (s as any)[k] = v; }
+            }
+          }
+          if (pdfDebug) {
+            // Log de diagnóstico: valores que van al PDF
+            console.log('[PDF] summary raw:', summary);
+            console.log('[PDF] normSummary:', normSummary);
+            console.log('[PDF] parsed.summary:', parsed?.summary);
+            console.log('[PDF] merged summary (s):', s);
+            console.log('[PDF] hydrationLiters:', hydrationLiters);
+          }
+        } catch {}
+        // Normalizar snapshot final para usar nombres estándar en el PDF
+        const sNorm = normalizeSummary(s, profile) || {} as any;
+        // Completar heurísticas faltantes para PDF
+        if (sNorm && sNorm.kcal_objetivo == null && sNorm.proteinas_g != null && sNorm.grasas_g != null && sNorm.carbohidratos_g != null) {
+          sNorm.kcal_objetivo = Math.max(0, Math.round(sNorm.proteinas_g * 4 + sNorm.grasas_g * 9 + sNorm.carbohidratos_g * 4));
+        }
+        if (sNorm && sNorm.deficit_superavit_kcal == null && sNorm.tdee != null && sNorm.kcal_objetivo != null) {
+          sNorm.deficit_superavit_kcal = Math.round(Number(sNorm.tdee) - Number(sNorm.kcal_objetivo));
+        }
+        if (sNorm && sNorm.ritmo_peso_kg_sem == null && sNorm.deficit_superavit_kcal != null) {
+          sNorm.ritmo_peso_kg_sem = Number(((Number(sNorm.deficit_superavit_kcal) * 7) / 7700) * -1);
+        }
         doc.setTextColor(0);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(12);
@@ -1293,15 +1672,14 @@ export default function OnboardingAdvicePage() {
         cursorY += 18;
         doc.setFont("helvetica", "normal");
         const rows: Array<[string, string]> = [
-          ["TMB", s?.tmb != null ? `${Math.round(s.tmb)} kcal` : "—"],
-          ["TDEE", s?.tdee != null ? `${Math.round(s.tdee)} kcal` : "—"],
-          ["Kcal objetivo", s?.kcal_objetivo != null ? `${Math.round(s.kcal_objetivo)} kcal` : "—"],
-          ["Déficit/Superávit", s?.deficit_superavit_kcal != null ? `${Math.round(s.deficit_superavit_kcal)} kcal/día` : "—"],
-          ["Ritmo estimado", s?.ritmo_peso_kg_sem != null ? `${Number(s.ritmo_peso_kg_sem).toFixed(2)} kg/sem` : "—"],
-          ["Proteínas", s?.proteinas_g != null ? `${Math.round(s.proteinas_g)} g` : "—"],
-          ["Grasas", s?.grasas_g != null ? `${Math.round(s.grasas_g)} g` : "—"],
-          ["Carbohidratos", s?.carbohidratos_g != null ? `${Math.round(s.carbohidratos_g)} g` : "—"],
-          // Objetivo de agua (separado de bebidas) si hydrationLiters está presente
+          ["TMB", sNorm?.tmb != null ? `${Math.round(sNorm.tmb)} kcal` : "—"],
+          ["TDEE", sNorm?.tdee != null ? `${Math.round(sNorm.tdee)} kcal` : "—"],
+          ["Kcal objetivo", sNorm?.kcal_objetivo != null ? `${Math.round(sNorm.kcal_objetivo)} kcal` : "—"],
+          ["Déficit/Superávit", sNorm?.deficit_superavit_kcal != null ? `${Math.round(sNorm.deficit_superavit_kcal)} kcal/día` : "—"],
+          ["Ritmo estimado", sNorm?.ritmo_peso_kg_sem != null ? `${Number(sNorm.ritmo_peso_kg_sem).toFixed(2)} kg/sem` : "—"],
+          ["Proteínas", sNorm?.proteinas_g != null ? `${Math.round(sNorm.proteinas_g)} g` : "—"],
+          ["Grasas", sNorm?.grasas_g != null ? `${Math.round(sNorm.grasas_g)} g` : "—"],
+          ["Carbohidratos", sNorm?.carbohidratos_g != null ? `${Math.round(sNorm.carbohidratos_g)} g` : "—"],
           ["Agua (objetivo)", (typeof hydrationLiters === 'number' && hydrationLiters > 0) ? `${hydrationLiters.toFixed(2)} L` : "—"],
         ];
         const leftColWidth = 140;
@@ -1352,7 +1730,7 @@ export default function OnboardingAdvicePage() {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(11);
 
-      const weeklyPlan = weekly?.weekly;
+      const weeklyPlan = Array.isArray(ephemeralWeekly) && ephemeralWeekly.length ? ephemeralWeekly : (weekly?.weekly || null);
       if (Array.isArray(weeklyPlan) && weeklyPlan.length) {
         for (const day of weeklyPlan) {
           if (cursorY > pageHeight - margin) { doc.addPage(); cursorY = margin; }
@@ -1508,7 +1886,7 @@ export default function OnboardingAdvicePage() {
         <OnboardingCard>
           <div className="font-medium">Plan semanal sugerido (vista previa)</div>
           <div className="text-xs text-muted-foreground">No se guarda todavía; si retrocedes no se persistirá ningún cambio. (Generado en memoria)</div>
-          {loading && !ephemeralWeekly ? (
+          {loading ? (
             <div className="w-full mt-3">
               <div className="text-sm mb-2 text-muted-foreground flex items-center justify-between">
                 <span>Generando plan semanal…</span>
