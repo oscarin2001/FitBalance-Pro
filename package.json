@@ -5,8 +5,6 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "npm run verify:prisma && npm run prisma:prepare && next build",
-    "verify:prisma": "node scripts/verify-prisma.mjs",
-    "prisma:prepare": "node scripts/prisma-prepare.mjs",
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint"
