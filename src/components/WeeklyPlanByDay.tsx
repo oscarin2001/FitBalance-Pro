@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { stripMarkdownStars } from "@/lib/utils";
 
 function labelForTipo(t: string) {
   const s = String(t);
@@ -107,12 +108,19 @@ export default function WeeklyPlanByDay({ weekly, className, schedule, beverages
                         </div>
                         <div className="min-w-0 leading-snug">
                           <div className="flex flex-wrap items-baseline gap-1">
-                            <span
-                              className="font-medium inline-block align-baseline break-words whitespace-normal"
-                              title={m.receta?.nombre ?? '—'}
-                            >
-                              {m.receta?.nombre ?? '—'}
-                            </span>
+                            {(() => {
+                              const rawName = m.receta?.nombre ?? '';
+                              const cleanName = stripMarkdownStars(rawName);
+                              const display = cleanName || rawName || '—';
+                              return (
+                                <span
+                                  className="font-medium inline-block align-baseline break-words whitespace-normal"
+                                  title={display}
+                                >
+                                  {display}
+                                </span>
+                              );
+                            })()}
                             {m.targetProteinG ? <span className="text-muted-foreground shrink-0">• {m.targetProteinG} g proteína</span> : null}
                           </div>
                           {Array.isArray(m.itemsText) && m.itemsText.length > 0 && (

@@ -3,6 +3,8 @@ import prisma from "@/lib/db/prisma";
 import { getToken } from "next-auth/jwt";
 import jwt from "jsonwebtoken"; // legacy
 
+const ALLOWED_INTERVALS = [1, 2, 3, 4];
+
 async function resolveUserId(req) {
   try {
     const token = await getToken({ req });
@@ -49,7 +51,7 @@ export async function GET(request) {
 
     // Preferencia de intervalo del usuario (fallback 2)
     const u = await prisma.usuario.findUnique({ where: { id: userId }, select: { measurement_interval_weeks: true } });
-    const weeks = u?.measurement_interval_weeks && [2,3,4].includes(Number(u.measurement_interval_weeks)) ? Number(u.measurement_interval_weeks) : 2;
+    const weeks = u?.measurement_interval_weeks && ALLOWED_INTERVALS.includes(Number(u.measurement_interval_weeks)) ? Number(u.measurement_interval_weeks) : 2;
 
     // Mediciones del mes
     const items = await prisma.progresoCorporal.findMany({

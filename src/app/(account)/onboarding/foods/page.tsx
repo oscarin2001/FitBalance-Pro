@@ -172,13 +172,14 @@ function FoodsInner() {
     snacks: [],
     beverages: [],
   });
-  // Paso del wizard: 0=carbs,1=proteins,2=fiber,3=fats+snacks,4=summary
-  const steps: Array<"carbs" | "proteins" | "fiber" | "fats_snacks" | "summary"> = [
+  // Paso del wizard: flujo secuencial por macro y bebidas
+  const steps: Array<"carbs" | "proteins" | "fiber" | "fats" | "snacks" | "beverages"> = [
     "carbs",
     "proteins",
     "fiber",
-    "fats_snacks",
-    "summary",
+    "fats",
+    "snacks",
+    "beverages",
   ];
   const [stepIndex, setStepIndex] = useState(0);
   const [searchResults, setSearchResults] = useState<Partial<Record<keyof Prefs, string[]>>>({});
@@ -307,7 +308,7 @@ function FoodsInner() {
     if (current === "carbs") return prefs.carbs.length >= 3;
     if (current === "proteins") return prefs.proteins.length >= 1;
     if (current === "fiber") return prefs.fiber.length >= 3;
-    if (current === "fats_snacks") return prefs.fats.length + prefs.snacks.length >= 1;
+    if (current === "fats") return prefs.fats.length >= 1;
     return true;
   }
 
@@ -381,12 +382,13 @@ function FoodsInner() {
           ? "Elige al menos 1 proteína"
           : current === "fiber"
           ? "Elige al menos 3 fuentes de fibra"
-          : "Elige al menos 1 opción entre grasas/snacks";
+          : current === "fats"
+          ? "Elige al menos 1 grasa saludable"
+          : "Selecciona tus opciones favoritas antes de continuar";
       toast.error(msg);
       return;
     }
-    if (current === "summary") {
-      // Guardar
+    if (current === "beverages") {
       void finishAndSave();
       return;
     }
@@ -478,8 +480,9 @@ function FoodsInner() {
     carbs: "Paso 1: Elige 3 carbohidratos (mínimo)",
     proteins: "Paso 2: Elige al menos 1 proteína",
     fiber: "Paso 3: Elige 3 fibras (mínimo)",
-    fats_snacks: "Paso 4: Elige 1 o más grasas/snacks",
-    summary: "Resumen de tu selección",
+    fats: "Paso 4: Elige al menos 1 grasa saludable",
+    snacks: "Paso 5: ¿Qué snacks disfrutas?",
+    beverages: "Paso 6: Bebidas e infusiones favoritas",
   };
 
   // Construir listas a mostrar con preferencia por catálogo regional
@@ -547,50 +550,26 @@ function FoodsInner() {
         {current === "fiber" && (
           <Group title="Fibra" kind="fiber" items={DISPLAY.fiber} extra={mergedSearch.fiber} selected={prefs.fiber} input={inputs.fiber} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
         )}
-        {current === "fats_snacks" && (
-          <div className="space-y-4">
-            <Group title="Grasas" kind="fats" items={DISPLAY.fats} extra={mergedSearch.fats} selected={prefs.fats} input={inputs.fats} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
-            <Group title="Snacks" kind="snacks" items={DISPLAY.snacks} extra={mergedSearch.snacks} selected={prefs.snacks} input={inputs.snacks} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
-            {DISPLAY.bebidas.length > 0 && (
-              <Group title="Bebidas e infusiones" kind={"beverages" as keyof Prefs} items={DISPLAY.bebidas} extra={mergedSearch.beverages} selected={prefs.beverages} input={inputs.beverages} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
-            )}
+        {current === "fats" && (
+          <Group title="Grasas" kind="fats" items={DISPLAY.fats} extra={mergedSearch.fats} selected={prefs.fats} input={inputs.fats} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
+        )}
+        {current === "snacks" && (
+          <Group title="Snacks" kind="snacks" items={DISPLAY.snacks} extra={mergedSearch.snacks} selected={prefs.snacks} input={inputs.snacks} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
+        )}
+        {current === "beverages" && (
+          <div className="space-y-3">
+            <Group title="Bebidas e infusiones" kind={"beverages" as keyof Prefs} items={DISPLAY.bebidas} extra={mergedSearch.beverages} selected={prefs.beverages} input={inputs.beverages} onInputChange={onInputChange} onAdd={onAddFromGroup} onToggleLocal={onToggleLocal} />
+            <OnboardingCard className="bg-muted/40 text-xs text-muted-foreground">
+              Estas bebidas no reemplazan tu consumo diario de agua. Son complementos sin azúcar añadida que puedes incluir además de tu hidratación principal.
+            </OnboardingCard>
           </div>
         )}
-        {current === "summary" && (
-          <div className="space-y-4">
-            <OnboardingCard>
-              <div className="font-medium mb-2">Carbohidratos ({prefs.carbs.length})</div>
-              <div className="text-sm text-muted-foreground whitespace-pre-wrap">{prefs.carbs.join(", ") || "Sin selección"}</div>
-            </OnboardingCard>
-            <OnboardingCard>
-              <div className="font-medium mb-2">Proteínas ({prefs.proteins.length})</div>
-              <div className="text-sm text-muted-foreground whitespace-pre-wrap">{prefs.proteins.join(", ") || "Sin selección"}</div>
-            </OnboardingCard>
-            <OnboardingCard>
-              <div className="font-medium mb-2">Fibra ({prefs.fiber.length})</div>
-              <div className="text-sm text-muted-foreground whitespace-pre-wrap">{prefs.fiber.join(", ") || "Sin selección"}</div>
-            </OnboardingCard>
-            <OnboardingCard>
-              <div className="font-medium mb-2">Grasas/Snacks ({prefs.fats.length + prefs.snacks.length})</div>
-              <div className="text-sm text-muted-foreground whitespace-pre-wrap">
-                {[...prefs.fats, ...prefs.snacks].join(", ") || "Sin selección"}
-              </div>
-            </OnboardingCard>
-            {LISTS.bebidas.length > 0 && (
-              <OnboardingCard>
-                <div className="font-medium mb-2">Bebidas e infusiones ({(prefs.beverages || []).length})</div>
-                <div className="text-sm text-muted-foreground whitespace-pre-wrap">{(prefs.beverages || []).join(", ") || "Sin selección"}</div>
-              </OnboardingCard>
-            )}
-          </div>
-        )}
-        
         <OnboardingActions
           back={{ onClick: goBack, label: "Atrás" }}
           next={{ 
             onClick: goNext, 
-            label: current === "summary" ? (saving ? "Guardando..." : "Finalizar") : "Siguiente", 
-            disabled: saving 
+            label: current === "beverages" ? (saving ? "Guardando..." : "Finalizar") : "Siguiente", 
+            disabled: saving && current === "beverages" 
           }}
         />
         <div className="mt-1 mb-4 text-center text-xs text-muted-foreground">

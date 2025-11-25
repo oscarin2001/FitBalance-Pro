@@ -28,6 +28,7 @@ type Progress = {
 };
 
 export default function ProgressPage() {
+  const ALLOWED_MEASUREMENT_INTERVALS = [1, 2, 3, 4];
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Progress[]>([]);
   const [profile, setProfile] = useState<any | null>(null);
@@ -69,7 +70,7 @@ export default function ProgressPage() {
         if (weeksRes.ok) {
           const wj = await weeksRes.json();
           const w = Number(wj?.weeks);
-          setMeasWeeks([2,3,4].includes(w) ? w : null);
+          setMeasWeeks(ALLOWED_MEASUREMENT_INTERVALS.includes(w) ? w : null);
         }
       } catch {
         toast.error("No se pudo cargar el progreso");
@@ -124,8 +125,8 @@ export default function ProgressPage() {
     try {
       setSavingWeeks(true);
       const w = Number(measWeeks);
-      if (![2,3,4].includes(w)) {
-        toast.error("Selecciona 2, 3 o 4 semanas");
+      if (!ALLOWED_MEASUREMENT_INTERVALS.includes(w)) {
+        toast.error("Selecciona una frecuencia válida");
         return;
       }
       const res = await fetch("/api/account/profile/measurement-interval", {

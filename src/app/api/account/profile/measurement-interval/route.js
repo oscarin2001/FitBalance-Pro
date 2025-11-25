@@ -1,4 +1,8 @@
+import { NextResponse } from "next/server";
+import prisma from "@/lib/db/prisma";
 import { resolveUserId } from "@/lib/auth/resolveUserId";
+
+const ALLOWED_INTERVALS = [1, 2, 3, 4];
 
 export async function GET(request) {
   try {
@@ -25,8 +29,8 @@ export async function POST(request) {
 
     const body = await request.json();
     const weeks = Number(body?.weeks);
-    if (![2,3,4].includes(weeks)) {
-      return NextResponse.json({ error: "Valor inválido (2,3,4)" }, { status: 400 });
+    if (!ALLOWED_INTERVALS.includes(weeks)) {
+      return NextResponse.json({ error: "Valor inválido (elige entre 1 y 4 semanas)" }, { status: 400 });
     }
 
     await prisma.usuario.update({

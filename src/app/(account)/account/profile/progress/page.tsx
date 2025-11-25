@@ -1,258 +1,280 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import Link from "next/link";
+import { CalendarDays, CheckCircle2, Info } from "lucide-react";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Toaster } from "@/components/ui/sonner";
-import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-type ProgressForm = {
-  fecha: string; // YYYY-MM-DD
-  peso_kg?: string;
-  grasa_percent?: string;
-  musculo_percent?: string;
-  agua_percent?: string;
-  imc?: string;
-  cintura_cm?: string;
-  cadera_cm?: string;
-  cuello_cm?: string;
-  pecho_cm?: string;
-  brazo_cm?: string;
-  muslo_cm?: string;
-  gluteo_cm?: string;
-  foto_url?: string;
-  notas?: string;
-  fuente?: string;
+const ALLOWED_INTERVALS = [1, 2, 3, 4] as const;
+const DEFAULT_INTERVAL = 2;
+
+type IntervalValue = (typeof ALLOWED_INTERVALS)[number];
+
+type IntervalOption = {
+	value: IntervalValue;
+	label: string;
+	description: string;
+	tip: string;
 };
 
-export default function ProgressProfilePage() {
-  const [form, setForm] = useState<ProgressForm>(() => ({
-    fecha: new Date().toISOString().slice(0, 10),
-  }));
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [lastItems, setLastItems] = useState<any[]>([]);
-  const [summaryWeek, setSummaryWeek] = useState<any>(null);
-  const [summaryMonth, setSummaryMonth] = useState<any>(null);
+const OPTIONS: IntervalOption[] = [
+	{
+		value: 1,
+		label: "Cada semana",
+		description: "Control estricto para fases de corte agresivo o atletas con objetivos puntuales.",
+		tip: "Procura medir siempre a la misma hora y con condiciones similares para reducir ruido.",
+	},
+	{
+		value: 2,
+		label: "Cada 2 semanas (recomendado)",
+		description: "Balance ideal entre consistencia y tiempo invertido. Es la opción predeterminada del dashboard.",
+		tip: "Perfecto para recomposición y procesos de pérdida de grasa moderada.",
+	},
+	{
+		value: 3,
+		label: "Cada 3 semanas",
+		description: "Para etapas largas o cuando prefieres menos interrupciones en tu rutina semanal.",
+		tip: "Úsalo en temporadas con carga laboral alta; apóyate en fotos y notas.",
+	},
+	{
+		value: 4,
+		label: "Cada 4 semanas",
+		description: "Seguimiento mensual clásico para mantenimiento o fases de volumen controlado.",
+		tip: "Complementa con registro de energía, sueño y apetito para un contexto completo.",
+	},
+];
 
-  function onChange(name: keyof ProgressForm, value: string) {
-    setForm((prev) => ({ ...prev, [name]: value }));
-  }
+function parseDateOnly(value: string | null | undefined) {
+	if (!value || typeof value !== "string") return null;
+	const date = new Date(`${value}T00:00:00`);
+	return Number.isNaN(date.getTime()) ? null : date;
+}
 
-  async function loadData() {
-    try {
-      setLoading(true);
-      const [itemsRes, weekRes, monthRes] = await Promise.all([
-        fetch(`/api/account/progress?limit=7`),
-        fetch(`/api/account/progress/summary?window=week&ending=${form.fecha}`),
-        fetch(`/api/account/progress/summary?window=month&ending=${form.fecha}`),
-      ]);
-      const itemsJson = await itemsRes.json();
-      const weekJson = await weekRes.json();
-      const monthJson = await monthRes.json();
-      setLastItems(itemsJson.items || []);
-      setSummaryWeek(weekJson);
-      setSummaryMonth(monthJson);
-    } catch (e) {
-      console.error(e);
-      toast.error("No se pudo cargar el progreso");
-    } finally {
-      setLoading(false);
-    }
-  }
+function formatDate(isoDate: string) {
+	const parsed = parseDateOnly(isoDate);
+	if (!parsed) return isoDate;
+	try {
+		const formatter = new Intl.DateTimeFormat("es-ES", {
+			day: "2-digit",
+			month: "long",
+			year: "numeric",
+		});
+		return formatter.format(parsed);
+	} catch {
+		return isoDate;
+	}
+}
 
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+export default function ProfileProgressPreferencesPage() {
+	const [currentInterval, setCurrentInterval] = useState<IntervalValue>(DEFAULT_INTERVAL);
+	const [initialInterval, setInitialInterval] = useState<IntervalValue>(DEFAULT_INTERVAL);
+	const [loading, setLoading] = useState(true);
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [success, setSuccess] = useState<string | null>(null);
+	const [lastMeasurementDate, setLastMeasurementDate] = useState<string | null>(null);
 
-  const weekCards = useMemo(() => [
-    { title: "Peso prom. (sem)", value: summaryWeek?.weight?.avg ?? "-" },
-    { title: "Pend. kg/sem", value: summaryWeek?.weight?.slope_kg_per_week ?? "-" },
-    { title: "%Grasa prom.", value: summaryWeek?.bodyfat?.avg_percent ?? "-" },
-    { title: "Δ %Grasa/sem", value: summaryWeek?.bodyfat?.slope_percent_points_per_week ?? "-" },
-    { title: "%Músculo prom.", value: summaryWeek?.muscle?.avg_percent ?? "-" },
-    { title: "Δ %Músculo/sem", value: summaryWeek?.muscle?.slope_percent_points_per_week ?? "-" },
-  ], [summaryWeek]);
+	useEffect(() => {
+		let ignore = false;
+		(async () => {
+			try {
+				setLoading(true);
+				setError(null);
+				const [intervalRes, latestProgressRes] = await Promise.all([
+					fetch("/api/account/profile/measurement-interval", { cache: "no-store" }),
+					fetch("/api/account/progress?limit=1", { cache: "no-store" }),
+				]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const res = await fetch("/api/account/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form }),
-      });
-      if (!res.ok) throw new Error("error");
-      toast.success("Progreso guardado");
-      await loadData();
-    } catch (e) {
-      toast.error("No se pudo guardar");
-    } finally {
-      setSaving(false);
-    }
-  }
+				if (ignore) return;
 
-  async function applyAdjust() {
-    try {
-      const res = await fetch("/api/account/progress/adjust-plan", { method: "POST" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Error");
-      toast.success(`Objetivos ajustados a ${json.next.kcal_objetivo} kcal`);
-    } catch (e) {
-      toast.error("No se pudo ajustar el plan");
-    }
-  }
+				if (intervalRes.ok) {
+					const data = await intervalRes.json();
+					const weeks = Number(data?.weeks);
+					if (ALLOWED_INTERVALS.includes(weeks as IntervalValue)) {
+						setCurrentInterval(weeks as IntervalValue);
+						setInitialInterval(weeks as IntervalValue);
+					}
+				}
 
-  return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
-      <Toaster />
-      <h1 className="text-2xl font-bold">Progreso corporal</h1>
-      <p className="text-sm text-muted-foreground">Registra tu peso, porcentaje de grasa y masa muscular, y tus medidas corporales. Recomendado: ingresar datos 3-7 veces por semana.</p>
+				if (latestProgressRes.ok) {
+					const data = await latestProgressRes.json();
+					const last = Array.isArray(data?.items) ? data.items[0] : null;
+					const nextDate = parseDateOnly(last?.fecha);
+					setLastMeasurementDate(nextDate ? nextDate.toISOString().slice(0, 10) : null);
+				}
+			} catch {
+				if (!ignore) {
+					setError("No pudimos cargar la configuración de mediciones. Intenta nuevamente.");
+				}
+			} finally {
+				if (!ignore) setLoading(false);
+			}
+		})();
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Registrar medición</CardTitle>
-          <CardDescription>Selecciona la fecha y completa los campos que tengas disponibles.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="grid grid-cols-1 md:grid-cols-3 gap-4" onSubmit={onSubmit}>
-            <div>
-              <Label htmlFor="fecha">Fecha</Label>
-              <Input id="fecha" type="date" value={form.fecha} onChange={(e) => onChange("fecha", e.target.value)} />
-            </div>
+		return () => {
+			ignore = true;
+		};
+	}, []);
 
-            <div>
-              <Label htmlFor="peso">Peso (kg)</Label>
-              <Input id="peso" type="number" step="0.1" value={form.peso_kg || ""} onChange={(e) => onChange("peso_kg", e.target.value)} />
-            </div>
+	const previewDates = useMemo(() => {
+		const parsedAnchor = parseDateOnly(lastMeasurementDate);
+		const anchor = parsedAnchor ?? new Date();
+		const normalized = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+		if (Number.isNaN(normalized.getTime())) return [];
+		const weeks = currentInterval || DEFAULT_INTERVAL;
+		const dates: string[] = [];
+		for (let i = 1; i <= 4; i++) {
+			const copy = new Date(normalized);
+			copy.setDate(copy.getDate() + i * weeks * 7);
+			if (!Number.isNaN(copy.getTime())) {
+				dates.push(copy.toISOString().slice(0, 10));
+			}
+		}
+		return dates;
+	}, [currentInterval, lastMeasurementDate]);
 
-            <div>
-              <Label htmlFor="grasa">% Grasa</Label>
-              <Input id="grasa" type="number" step="0.1" value={form.grasa_percent || ""} onChange={(e) => onChange("grasa_percent", e.target.value)} />
-            </div>
+	const selectedOption = OPTIONS.find((opt) => opt.value === currentInterval);
+	const dirty = currentInterval !== initialInterval;
 
-            <div>
-              <Label htmlFor="musculo">% Masa Muscular</Label>
-              <Input id="musculo" type="number" step="0.1" value={form.musculo_percent || ""} onChange={(e) => onChange("musculo_percent", e.target.value)} />
-            </div>
+	async function handleSave() {
+		try {
+			setSaving(true);
+			setError(null);
+			setSuccess(null);
+			const res = await fetch("/api/account/profile/measurement-interval", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ weeks: currentInterval }),
+			});
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				throw new Error(payload?.error || "No se pudo guardar la preferencia");
+			}
+			setInitialInterval(currentInterval);
+			setSuccess("Listo. El dashboard de progreso usará esta frecuencia.");
+		} catch (err: any) {
+			setError(err?.message || "No se pudo guardar la preferencia");
+		} finally {
+			setSaving(false);
+		}
+	}
 
-            <div>
-              <Label htmlFor="agua">% Agua</Label>
-              <Input id="agua" type="number" step="0.1" value={form.agua_percent || ""} onChange={(e) => onChange("agua_percent", e.target.value)} />
-            </div>
+	function handleReset() {
+		setCurrentInterval(initialInterval);
+		setError(null);
+		setSuccess(null);
+	}
 
-            <div>
-              <Label htmlFor="imc">IMC</Label>
-              <Input id="imc" type="number" step="0.1" value={form.imc || ""} onChange={(e) => onChange("imc", e.target.value)} />
-            </div>
+	return (
+		<div className="space-y-6">
+			<div>
+				<h1 className="text-2xl font-semibold">Cadencia de mediciones</h1>
+				<p className="text-sm text-muted-foreground">
+					Define cada cuántas semanas quieres registrar tus controles físicos. Esta preferencia alimenta el calendario del dashboard y las
+					validaciones del formulario de progreso.
+				</p>
+			</div>
 
-            <div>
-              <Label>Cintura (cm)</Label>
-              <Input type="number" step="0.1" value={form.cintura_cm || ""} onChange={(e) => onChange("cintura_cm", e.target.value)} />
-            </div>
+			{error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+			{success && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
-            <div>
-              <Label>Cadera (cm)</Label>
-              <Input type="number" step="0.1" value={form.cadera_cm || ""} onChange={(e) => onChange("cadera_cm", e.target.value)} />
-            </div>
+			<Card>
+				<CardHeader>
+					<CardTitle>Frecuencia preferida</CardTitle>
+					<CardDescription>Selecciona el intervalo que mejor acompaña tu fase actual.</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-3">
+					{OPTIONS.map((option) => (
+						<button
+							key={option.value}
+							type="button"
+							onClick={() => !loading && !saving && setCurrentInterval(option.value)}
+							className={cn(
+								"w-full rounded-xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+								option.value === currentInterval ? "border-primary bg-primary/5" : "border-muted hover:border-primary/60",
+								(loading || saving) && "pointer-events-none opacity-60"
+							)}
+							aria-pressed={option.value === currentInterval}
+						>
+							<div className="flex items-start justify-between gap-4">
+								<div>
+									<p className="font-semibold">{option.label}</p>
+									<p className="text-sm text-muted-foreground">{option.description}</p>
+								</div>
+								{option.value === currentInterval && <CheckCircle2 className="h-5 w-5 text-primary" aria-hidden />}
+							</div>
+							<p className="mt-3 text-xs text-muted-foreground">{option.tip}</p>
+						</button>
+					))}
+				</CardContent>
+				<CardFooter className="flex flex-wrap items-center gap-2 justify-between">
+					<p className="text-xs text-muted-foreground flex items-center gap-1">
+						<Info className="h-3.5 w-3.5" /> Podrás editar mediciones puntuales desde el calendario del dashboard.
+					</p>
+					<div className="flex gap-2">
+						<Button type="button" variant="ghost" disabled={!dirty || saving} onClick={handleReset}>
+							Revertir
+						</Button>
+						<Button type="button" disabled={!dirty || saving} onClick={handleSave}>
+							{saving ? "Guardando..." : "Guardar"}
+						</Button>
+					</div>
+				</CardFooter>
+			</Card>
 
-            <div>
-              <Label>Cuello (cm)</Label>
-              <Input type="number" step="0.1" value={form.cuello_cm || ""} onChange={(e) => onChange("cuello_cm", e.target.value)} />
-            </div>
+			<Card>
+				<CardHeader>
+					<CardTitle>Vista previa</CardTitle>
+					<CardDescription>
+						Tomamos tu última medición como ancla para sugerir las siguientes fechas. Las verás reflejadas en el
+						<Link href="/dashboard/progress" className="ml-1 underline underline-offset-2">
+							dashboard de progreso
+						</Link>
+						.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="rounded-md border bg-muted/40 p-3 text-sm">
+						{lastMeasurementDate ? (
+							<>
+								<p className="font-medium text-foreground">Última medición registrada: {formatDate(lastMeasurementDate)}</p>
+								<p className="text-muted-foreground">
+									Esa fecha servirá como punto de partida para tus próximos recordatorios cada {currentInterval} semana(s).
+								</p>
+							</>
+						) : (
+							<>
+								<p className="font-medium text-foreground">Todavía no registras mediciones</p>
+								<p className="text-muted-foreground">Usaremos el día de hoy como referencia hasta que cargues tu primer control.</p>
+							</>
+						)}
+					</div>
 
-            <div>
-              <Label>Pecho (cm)</Label>
-              <Input type="number" step="0.1" value={form.pecho_cm || ""} onChange={(e) => onChange("pecho_cm", e.target.value)} />
-            </div>
-
-            <div>
-              <Label>Brazo (cm)</Label>
-              <Input type="number" step="0.1" value={form.brazo_cm || ""} onChange={(e) => onChange("brazo_cm", e.target.value)} />
-            </div>
-
-            <div>
-              <Label>Muslo (cm)</Label>
-              <Input type="number" step="0.1" value={form.muslo_cm || ""} onChange={(e) => onChange("muslo_cm", e.target.value)} />
-            </div>
-
-            <div>
-              <Label>Glúteo (cm)</Label>
-              <Input type="number" step="0.1" value={form.gluteo_cm || ""} onChange={(e) => onChange("gluteo_cm", e.target.value)} />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Foto (URL)</Label>
-              <Input type="url" placeholder="https://..." value={form.foto_url || ""} onChange={(e) => onChange("foto_url", e.target.value)} />
-            </div>
-
-            <div className="md:col-span-3">
-              <Label>Notas</Label>
-              <textarea className="w-full border rounded-md p-2 text-sm" rows={3} value={form.notas || ""} onChange={(e) => onChange("notas", e.target.value)} />
-            </div>
-
-            <div className="md:col-span-3 flex gap-3">
-              <Button type="submit" disabled={saving}>{saving ? "Guardando..." : "Guardar cambios"}</Button>
-              <Button type="button" variant="secondary" onClick={applyAdjust}>Ajustar plan según tendencia</Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Resumen semanal</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3">
-            {weekCards.map((c) => (
-              <div key={c.title} className="p-3 border rounded-md">
-                <div className="text-xs text-muted-foreground">{c.title}</div>
-                <div className="text-lg font-semibold">{c.value ?? "-"}</div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Últimas mediciones</CardTitle>
-            <CardDescription>Los últimos registros guardados.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left">
-                    <th className="p-2">Fecha</th>
-                    <th className="p-2">Peso</th>
-                    <th className="p-2">%Grasa</th>
-                    <th className="p-2">%Músculo</th>
-                    <th className="p-2">Cintura</th>
-                    <th className="p-2">Pecho</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lastItems.map((it) => (
-                    <tr key={it.id} className="border-t">
-                      <td className="p-2">{new Date(it.fecha).toISOString().slice(0,10)}</td>
-                      <td className="p-2">{it.peso_kg ?? "-"}</td>
-                      <td className="p-2">{it.grasa_percent ?? "-"}</td>
-                      <td className="p-2">{it.musculo_percent ?? "-"}</td>
-                      <td className="p-2">{it.cintura_cm ?? "-"}</td>
-                      <td className="p-2">{it.pecho_cm ?? "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
+					<div className="space-y-2">
+						<p className="text-sm font-semibold flex items-center gap-2">
+							<CalendarDays className="h-4 w-4" /> Próximas cuatro fechas sugeridas
+						</p>
+						<div className="grid gap-3 sm:grid-cols-2">
+							{previewDates.map((date, index) => (
+								<div key={date} className="rounded-lg border p-3">
+									<p className="text-sm font-semibold">{formatDate(date)}</p>
+									<p className="text-xs text-muted-foreground">{index === 0 ? "Próximo control" : `${index + 1}. recordatorio`}</p>
+								</div>
+							))}
+						</div>
+					</div>
+				</CardContent>
+				<CardFooter className="flex flex-wrap items-center gap-2 justify-between">
+					<p className="text-xs text-muted-foreground">
+						{selectedOption ? `Consejo: ${selectedOption.tip}` : "Selecciona un intervalo para ver recomendaciones."}
+					</p>
+					<Button asChild variant="secondary">
+						<Link href="/dashboard/progress">Abrir dashboard</Link>
+					</Button>
+				</CardFooter>
+			</Card>
+		</div>
+	);
 }

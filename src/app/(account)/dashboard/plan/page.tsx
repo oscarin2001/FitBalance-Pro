@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
+import { stripMarkdownStars } from "@/lib/utils";
  
 
 type MealItem = {
@@ -245,11 +246,12 @@ export default function PlanPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [planRes, compRes, sumRes, aiPlanRes] = await Promise.all([
+        const [planRes, compRes, sumRes, aiPlanRes, beveragesRes] = await Promise.all([
           fetch(`/api/account/meal-plan?date=${selectedDate}`),
           fetch(`/api/account/meal-plan/compliance?date=${selectedDate}`),
           fetch("/api/account/dashboard/summary", { cache: "no-store" }),
           fetch("/api/account/plan", { cache: "no-store" }),
+          fetch("/api/account/beverages-plan", { cache: "no-store" }),
         ]);
         const planJson = await planRes.json();
         const compJson = await compRes.json();
@@ -283,18 +285,31 @@ export default function PlanPage() {
           setHidratacion(sumJson?.hidratacion || null);
         }
         // Leer plan_ai semanal y bebidas si existen
+        let beveragesItems: { nombre: string; ml: number; momento: string }[] | null = null;
         if (aiPlanRes.ok && aiPlanJson) {
           const w = aiPlanJson?.plan_ai?.weekly;
           if (Array.isArray(w) && w.length) setPlanAIWeekly(w);
           const bev = aiPlanJson?.plan_ai?.beverages?.items;
-          if (Array.isArray(bev) && bev.length) setBeveragesPlan(
-            bev.map((b: any) => ({
+          if (Array.isArray(bev) && bev.length) {
+            beveragesItems = bev.map((b: any) => ({
               nombre: (b?.nombre || b?.name || 'Bebida').toString(),
               ml: Math.min(250, Math.max(0, Number(b?.ml) || 0)),
               momento: (b?.momento || 'General').toString()
-            }))
-          );
+            }));
+          }
         }
+        if (!beveragesItems && beveragesRes.ok) {
+          const bevJson = await beveragesRes.json().catch(() => ({}));
+          const bevApi = Array.isArray(bevJson?.items) ? bevJson.items : null;
+          if (bevApi && bevApi.length) {
+            beveragesItems = bevApi.map((b: any) => ({
+              nombre: (b?.nombre || 'Bebida').toString(),
+              ml: Math.min(250, Math.max(0, Number(b?.ml) || 0)),
+              momento: (b?.momento || 'General').toString()
+            }));
+          }
+        }
+        setBeveragesPlan(beveragesItems && beveragesItems.length ? beveragesItems : null);
         // Cargar horarios persistidos
         try {
           const schedRes = await fetch("/api/account/meal-plan/schedule", { cache: "no-store" });
@@ -482,6 +497,15 @@ export default function PlanPage() {
     if (/(mañana|manana)/.test(t)) return "Snack_manana";
     if (/tarde/.test(t)) return "Snack_tarde";
     return null;
+  }
+
+  function normalizeForBeverages(raw: string): string {
+    const t = (raw || "").toLowerCase();
+    if (t.startsWith("desayuno")) return "desayuno";
+    if (/almuerzo|comida|lunch/.test(t)) return "almuerzo";
+    if (t.startsWith("cena") || /dinner/.test(t)) return "cena";
+    if (t.startsWith("snack")) return "snack";
+    return t;
   }
 
   // Devuelve hora efectiva (prioriza fila -> variante -> genérico)
@@ -1021,15 +1045,30 @@ export default function PlanPage() {
                   if (/snack/i.test(String(m.tipo))) {
                     idxForToggle = /tarde/i.test(String(m.tipo)) ? 1 : 0;
                   }
+                  const normMeal = normalizeForBeverages(m.tipo as string);
+                  const beverageMatches = Array.isArray(beveragesPlan)
+                    ? beveragesPlan.filter((b) => {
+                        const mom = (b?.momento || "").toLowerCase();
+                        if (!mom || mom === "general") return false;
+                        if (mom === "snack" && normMeal === "snack") return true;
+                        return mom === normMeal;
+                      })
+                    : [];
                   return (
                     <li key={i} className="border rounded-md p-3 flex flex-col gap-2 bg-background relative">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex flex-col flex-1 min-w-0 gap-1">
                           <div className="flex items-start gap-2 flex-wrap min-w-0">
                             <span className="text-[11px] font-mono bg-muted px-2 py-0.5 rounded border">{h}</span>
-                            <span className="font-medium text-sm break-words whitespace-normal">
-                              {full?.receta?.nombre || m.receta?.nombre || m.tipo}
-                            </span>
+                            {(() => {
+                              const rawName = full?.receta?.nombre || m.receta?.nombre || m.tipo || '—';
+                              const display = stripMarkdownStars(rawName) || rawName;
+                              return (
+                                <span className="font-medium text-sm break-words whitespace-normal">
+                                  {display}
+                                </span>
+                              );
+                            })()}
                           </div>
                           {showMacros && full?.receta?.macros && (
                             <div className="text-[11px] text-muted-foreground flex gap-3 flex-wrap break-words">
@@ -1092,6 +1131,15 @@ export default function PlanPage() {
                           </ul>
                         </div>
                       )}
+                          {beverageMatches.length > 0 && (
+                            <ul className="text-[11px] text-muted-foreground list-disc pl-5 space-y-0.5">
+                              {beverageMatches.map((b, idxB) => (
+                                <li key={`${b.nombre}-${b.momento}-${idxB}`}>
+                                  {b.nombre}{b.ml > 0 ? ` (${b.ml} ml)` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                     </li>
                   );
                 })}
@@ -1151,6 +1199,31 @@ export default function PlanPage() {
                   {!allowCompliance && <span className="text-xs text-muted-foreground">Solo lectura</span>}
                 </div>
               </div>
+
+              {Array.isArray(beveragesPlan) && beveragesPlan.length > 0 && (
+                <div className="space-y-2 pt-2 border-t">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">Bebidas e infusiones</span>
+                    <span className="text-muted-foreground text-xs">Desde tu onboarding</span>
+                  </div>
+                  <ul className="space-y-2">
+                    {beveragesPlan.map((b, idx) => (
+                      <li
+                        key={`${b.nombre}-${b.momento}-${idx}`}
+                        className="flex items-center justify-between gap-4 rounded-md border bg-muted/30 px-3 py-2"
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium leading-tight">{b.nombre}</span>
+                          <span className="text-xs text-muted-foreground">{b.momento}</span>
+                        </div>
+                        {b.ml > 0 && (
+                          <span className="text-xs font-semibold tabular-nums text-muted-foreground">{b.ml} ml</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -1164,7 +1237,7 @@ export default function PlanPage() {
               <DialogDescription>Vista general de tus comidas para la semana.</DialogDescription>
             </DialogHeader>
             <div className="max-h-[60vh] overflow-auto rounded-md border p-2 bg-muted/30">
-              <WeeklyPlanByDay weekly={weeklyPlan} schedule={hours} />
+              <WeeklyPlanByDay weekly={weeklyPlan} schedule={hours} beverages={beveragesPlan} />
             </div>
             <DialogFooter className="mt-4 flex justify-between w-full">
               <div className="text-xs text-muted-foreground">Los horarios se editan desde perfil.</div>

@@ -20,24 +20,66 @@ function num(n: any): number | null {
 
 function normalizeSummary(raw: any | null) {
   if (!raw || typeof raw !== 'object') return null as any;
-  const s: any = { ...raw };
+  const flat: Record<string, any> = {};
+  const visited = new WeakSet<object>();
+  function flatten(obj: any, path: string[] = []) {
+    if (!obj || typeof obj !== 'object') return;
+    const ref = obj as object;
+    if (visited.has(ref)) return;
+    visited.add(ref);
+    if (Array.isArray(obj)) {
+      obj.forEach((item, idx) => {
+        if (item != null && typeof item === 'object') flatten(item, [...path, String(idx)]);
+      });
+      return;
+    }
+    for (const [keyRaw, value] of Object.entries(obj)) {
+      const key = String(keyRaw);
+      if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+        flatten(value, [...path, key]);
+        continue;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, idx) => {
+          if (item != null && typeof item === 'object') flatten(item, [...path, key, String(idx)]);
+        });
+        continue;
+      }
+      if (value == null) continue;
+      if (!(key in flat)) flat[key] = value;
+      const parent = path[path.length - 1];
+      if (parent) {
+        const composite = `${parent}_${key}`;
+        if (!(composite in flat)) flat[composite] = value;
+        if (/objetivo|target|goal|value|valor|objective|gramos|grams|cantidad|amount/.test(key.toLowerCase())) {
+          if (!(parent in flat)) flat[parent] = value;
+          const parentGoal = `${parent}_objetivo`;
+          if (!(parentGoal in flat)) flat[parentGoal] = value;
+        }
+      }
+      const joined = [...path, key].join('_');
+      if (joined && !(joined in flat)) flat[joined] = value;
+    }
+  }
+  flatten(raw);
+  const s: any = { ...flat };
   const pick = (...keys: string[]) => {
     for (const k of keys) {
-      const v = (s as any)[k];
-      const n = num(v);
-      if (n != null) return n;
+      if (!(k in s)) continue;
+      const nVal = num(s[k]);
+      if (nVal != null) return nVal;
     }
     return null;
   };
   const out: any = {};
   out.tmb = pick('tmb','TMB','TMB_kcal','tmb_kcal');
   out.tdee = pick('tdee','TDEE','tdee_kcal','TDEE_kcal');
-  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo');
-  out.deficit_superavit_kcal = pick('deficit_superavit_kcal','deficit_kcal','superavit_kcal','deficit');
-  out.ritmo_peso_kg_sem = pick('ritmo_peso_kg_sem','ritmo_kg_sem','rate_kg_week');
-  out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g');
-  out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g');
-  out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g');
+  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo','objetivo_calorico','calorie_target','caloric_target','calorie_goal');
+  out.deficit_superavit_kcal = pick('deficit_superavit_kcal','deficit_kcal','superavit_kcal','deficit','delta_kcal');
+  out.ritmo_peso_kg_sem = pick('ritmo_peso_kg_sem','ritmo_kg_sem','rate_kg_week','proyeccion_cambio_semanal_kg');
+  out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g','proteinas_objetivo','protein');
+  out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g','grasas_objetivo','fat');
+  out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g','carbohidratos_objetivo','carbs','carbohydrates');
   return out;
 }
 

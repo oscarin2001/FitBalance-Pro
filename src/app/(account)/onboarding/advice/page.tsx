@@ -12,6 +12,7 @@ import { OnboardingCard } from "@/components/onboarding/OnboardingCard";
 import WeeklyPlanByDay from "@/components/WeeklyPlanByDay";
 import { useMemo } from "react";
 import { Clipboard, Download } from "lucide-react";
+import { stripMarkdownStars } from "@/lib/utils";
 
 function num(n: any): number | null {
   if (typeof n === 'number' && Number.isFinite(n)) return n;
@@ -108,10 +109,57 @@ function tryParseAdviceJson(text: string): { summary?: any; meals?: any; hydrati
 }
 
 function normalizeSummary(raw: any | null, profile?: any | null) {
-  // Permitir derivación aún cuando no haya 'raw' (tomar del perfil)
-  const s: any = (raw && typeof raw === 'object') ? { ...raw } : {};
+  const flat: Record<string, any> = {};
+  const visited = new WeakSet<object>();
+  function flatten(obj: any, path: string[] = []) {
+    if (!obj || typeof obj !== 'object') return;
+    const ref = obj as object;
+    if (visited.has(ref)) return;
+    visited.add(ref);
+    if (Array.isArray(obj)) {
+      obj.forEach((item, idx) => {
+        if (item != null && typeof item === 'object') {
+          flatten(item, [...path, String(idx)]);
+        }
+      });
+      return;
+    }
+    for (const [keyRaw, value] of Object.entries(obj)) {
+      const key = String(keyRaw);
+      if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+        flatten(value, [...path, key]);
+        continue;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, idx) => {
+          if (item != null && typeof item === 'object') flatten(item, [...path, key, String(idx)]);
+        });
+        continue;
+      }
+      if (value == null) continue;
+      if (!(key in flat)) flat[key] = value;
+      const parent = path[path.length - 1];
+      if (parent) {
+        const composite = `${parent}_${key}`;
+        if (!(composite in flat)) flat[composite] = value;
+        const keyLower = key.toLowerCase();
+        if (/objetivo|target|goal|value|valor|objective|gramos|grams|cantidad|amount/.test(keyLower)) {
+          if (!(parent in flat)) flat[parent] = value;
+          const parentGoal = `${parent}_objetivo`;
+          if (!(parentGoal in flat)) flat[parentGoal] = value;
+        }
+      }
+      const joined = [...path, key].join('_');
+      if (joined && !(joined in flat)) flat[joined] = value;
+    }
+  }
+  if (raw && typeof raw === 'object') {
+    flatten(raw);
+  }
+  const s: any = { ...(raw && typeof raw === 'object' ? raw : {}), ...flat };
   const pick = (...keys: string[]) => {
     for (const k of keys) {
+      if (!(k in s)) continue;
       const v = (s as any)[k];
       const n = num(v);
       if (n != null) return n;
@@ -121,12 +169,12 @@ function normalizeSummary(raw: any | null, profile?: any | null) {
   const out: any = {};
   out.tmb = pick('tmb','TMB','TMB_kcal','tmb_kcal');
   out.tdee = pick('tdee','TDEE','tdee_kcal','TDEE_kcal');
-  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo','ingesta_calorica_recomendada_kcal');
-  out.deficit_superavit_kcal = pick('deficit_superavit_kcal','deficit_kcal','superavit_kcal','deficit');
+  out.kcal_objetivo = pick('kcal_objetivo','kcal','calorias','calorias_objetivo','ingesta_calorica_recomendada_kcal','objetivo_calorico','calorie_target','caloric_target','calorie_goal');
+  out.deficit_superavit_kcal = pick('deficit_superavit_kcal','deficit_kcal','superavit_kcal','deficit','delta_kcal');
   out.ritmo_peso_kg_sem = pick('ritmo_peso_kg_sem','ritmo_kg_sem','rate_kg_week','proyeccion_cambio_semanal_kg');
-  out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g');
-  out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g');
-  out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g');
+  out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g','proteinas_objetivo','protein');
+  out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g','grasas_objetivo','fat');
+  out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g','carbohidratos_objetivo','carbs','carbohydrates');
 
   // Derivar TDEE desde el perfil si falta
   if (out.tdee == null && profile && typeof profile === 'object') {
@@ -738,49 +786,104 @@ export default function OnboardingAdvicePage() {
   candidateFruits = candidateFruits.slice(0, 8);
   candidateSnacks = candidateSnacks.slice(0, 8);
 
+  const genericNameTokens = new Set([
+    'proteina','proteína','proteins','protein','proteico','grasas','grasa','carbohidratos','carbohidrato','carbs',
+    'snack','colacion','colación','tentempié','meal','comida','desayuno','almuerzo','cena','base','default',
+    'variante','variantea','varianteb','opcion','opción','opciones','macro','macros','plato','general'
+  ]);
+
+  function titleCaseBasic(str: string): string {
+    return str
+      .replace(/[_\s]+/g, ' ')
+      .trim()
+      .replace(/(^|\s)([a-záéíóúñ])/gi, (_, p1: string, p2: string) => `${p1}${p2.toUpperCase()}`);
+  }
+
+  function isMeaningfulMealName(name: string | null | undefined, tipo: string): boolean {
+    if (!name) return false;
+    const clean = name.trim();
+    if (!clean) return false;
+    const lower = clean.toLowerCase();
+    const normalizedTipo = tipo.replace(/_/g, ' ').toLowerCase();
+    if (lower === normalizedTipo) return false;
+    if (lower === `${normalizedTipo} base`) return false;
+    if (lower.length <= 4) return false;
+    const tokens = lower.split(/[^a-záéíóúñü]+/i).filter(Boolean);
+    if (!tokens.length) return false;
+    const hasFoodWord = tokens.some((token) => !genericNameTokens.has(token));
+    return hasFoodWord;
+  }
+
+  function friendlyMealName(tipoComida: string, ingredientes: any[], variantIndex: number, fallbackName: string): string {
+    const fallback = fallbackName ? fallbackName.replace(/_/g, ' ').trim() : tipoComida;
+    const seen = new Set<string>();
+    const cleaned: Array<{ raw: string; lower: string }> = [];
+    ingredientes.forEach((ing: any) => {
+      const raw = (ing?.nombre || ing?.name || '').toString();
+      if (!raw) return;
+      const base = raw.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      if (!base) return;
+      const low = base.toLowerCase();
+      if (seen.has(low)) return;
+      seen.add(low);
+      cleaned.push({ raw: base, lower: low });
+    });
+    const pick = (regex: RegExp) => {
+      const found = cleaned.find((it) => regex.test(it.lower));
+      return found ? found.raw : '';
+    };
+    const prot = pick(proteinRegex2);
+    const carb = pick(carbRegex2);
+    const veg = pick(vegRegex2);
+    const fat = pick(fatRegex2);
+    const fruit = pick(fruitRegex2);
+    const snack = pick(snackRegex2);
+
+    let base = '';
+    if (/snack/i.test(tipoComida)) {
+      const main = snack || fruit || prot || cleaned[0]?.raw || fallback || tipoComida;
+      const extras = [fruit, prot, fat].filter((val) => val && val !== main);
+      if (extras.length >= 2) {
+        base = `${main} con ${extras[0]} y ${extras[1]}`;
+      } else if (extras.length === 1) {
+        base = `${main} con ${extras[0]}`;
+      } else {
+        base = main;
+      }
+    } else if (/desayuno|breakfast/i.test(tipoComida)) {
+      const main = carb || prot || fruit || cleaned[0]?.raw || fallback || tipoComida;
+      const extras = [prot, fruit, fat].filter((val) => val && val !== main);
+      if (extras.length >= 2) {
+        base = `${main} con ${extras[0]} y ${extras[1]}`;
+      } else if (extras.length === 1) {
+        base = `${main} con ${extras[0]}`;
+      } else {
+        base = main;
+      }
+    } else {
+      const main = prot || cleaned[0]?.raw || fallback || tipoComida;
+      const extras = [carb, veg, fat].filter((val) => val && val !== main);
+      if (extras.length >= 2) {
+        base = `${main} con ${extras[0]} y ${extras[1]}`;
+      } else if (extras.length === 1) {
+        base = `${main} con ${extras[0]}`;
+      } else {
+        base = main;
+      }
+    }
+
+    const pretty = titleCaseBasic(base || fallback || tipoComida);
+    if (variantIndex <= 0) return pretty;
+    return `${pretty} (Opción ${String.fromCharCode(65 + variantIndex)})`;
+  }
+
       function ensureVariants(list: any[], need: number) {
         const baseOriginal = list[0];
         if (!baseOriginal) return;
-        // Helper para construir nombre descriptivo basado en ingredientes clave
-        function buildNombre(tipoComida: string, ingredientes: any[], variantIndex: number): string {
-          const takeMatch = (regex: RegExp) => {
-            const ing = ingredientes.find(it => regex.test((it?.nombre || it?.name || '').toString().toLowerCase()));
-            if (! ing) return '';
-            return (ing.nombre || ing.name).toString();
-          };
-          const prot = takeMatch(proteinRegex2);
-          const carb = takeMatch(carbRegex2);
-          const veg  = takeMatch(vegRegex2);
-          const fruit = takeMatch(fruitRegex2);
-            const fat  = takeMatch(fatRegex2);
-          const snk  = /snack/i.test(tipoComida) ? takeMatch(snackRegex2) : '';
-          // Plantillas según tipo
-          let base = '';
-          if (/desayuno/i.test(tipoComida)) {
-            base = [prot || fruit || 'Desayuno', carb, fruit && !prot ? fruit : '', fat && !carb ? fat : ''].filter(Boolean).join(' + ');
-          } else if (/almuerzo|comida|lunch/i.test(tipoComida)) {
-            base = [prot || 'Proteína', carb, veg].filter(Boolean).join(' con ');
-          } else if (/cena|dinner/i.test(tipoComida)) {
-            base = [prot || 'Proteína', veg || carb, fat && !veg ? fat : ''].filter(Boolean).join(' + ');
-          } else if (/snack/i.test(tipoComida)) {
-            base = [snk || prot || fruit || 'Snack', fruit && snk !== fruit ? fruit : '', fat && !snk ? fat : ''].filter(Boolean).join(' / ');
-          } else {
-            base = [prot || 'Comida', carb, veg].filter(Boolean).join(' + ');
-          }
-          if (!base) base = tipoComida || 'Comida';
-          // Asegurar sufijo de variante A,B,C,D... según índice rotación
-          const suffix = String.fromCharCode(65 + variantIndex); // 0->A
-          return `${base} (${suffix})`;
-        }
-        // Asegurar que la variante base (índice 0) también tenga nombre descriptivo consistente
-        if (Array.isArray(baseOriginal.ingredientes)) {
-          baseOriginal.nombre = buildNombre(k, baseOriginal.ingredientes, 0);
-        }
         while (list.length < need) {
-          const variantIndex = list.length; // 1,2,3...
+          const variantIndex = list.length;
           const clone = JSON.parse(JSON.stringify(baseOriginal));
           if (!Array.isArray(clone.ingredientes)) clone.ingredientes = [];
-          // Reordenar para variar
           if (clone.ingredientes.length > 1) {
             const shift = variantIndex % clone.ingredientes.length;
             clone.ingredientes = [...clone.ingredientes.slice(shift), ...clone.ingredientes.slice(0, shift)];
@@ -807,10 +910,20 @@ export default function OnboardingAdvicePage() {
           rotateCategory(candidateFats, fatRegex2, 15);
           rotateCategory(candidateFruits, fruitRegex2, 120);
           if (/snack/i.test(k)) rotateCategory(candidateSnacks, snackRegex2, 30);
-          // Crear nombre final único descriptivo
-          clone.nombre = buildNombre(k, clone.ingredientes, variantIndex);
           list.push(clone);
         }
+
+        list.forEach((variant: any, idx: number) => {
+          if (!variant) return;
+          if (!Array.isArray(variant.ingredientes)) variant.ingredientes = [];
+          const currentName = typeof variant.nombre === 'string' ? variant.nombre.trim() : '';
+          if (currentName && isMeaningfulMealName(currentName, k)) {
+            variant.nombre = titleCaseBasic(currentName);
+          } else {
+            const fallbackName = currentName || (idx === 0 ? k : `${k} ${String.fromCharCode(65 + idx)}`);
+            variant.nombre = friendlyMealName(k, variant.ingredientes, idx, fallbackName);
+          }
+        });
       }
       ensureVariants(arr, requiredVariants);
     });
@@ -1756,7 +1869,8 @@ export default function OnboardingAdvicePage() {
           }
           for (const m of meals) {
             const tipo = String(m?.tipo ?? "");
-            const nombre = m?.receta?.nombre ? String(m.receta.nombre) : "—";
+            const rawNombre = m?.receta?.nombre ? String(m.receta.nombre) : "—";
+            const nombre = stripMarkdownStars(rawNombre) || rawNombre;
             const prot = (typeof m?.targetProteinG === 'number' && m.targetProteinG > 0) ? ` • ${m.targetProteinG} g proteína` : "";
             const line = `${tipo}: ${nombre}${prot}`;
             const wrapped = doc.splitTextToSize(line, usableWidth);
@@ -1789,7 +1903,37 @@ export default function OnboardingAdvicePage() {
         }
       }
 
-      // Se elimina sección de bebidas del PDF según nueva política (no listar hidratación ni agua)
+      const pdfBeveragesSource = Array.isArray(beverages) && beverages.length ? beverages : (Array.isArray(rawBeverages) && rawBeverages.length ? rawBeverages : null);
+      if (pdfBeveragesSource && pdfBeveragesSource.length) {
+        const normalizedBeverages = pdfBeveragesSource.map((b: any) => ({
+          nombre: (b?.nombre || b?.name || "Bebida").toString(),
+          momento: (b?.momento || "General").toString(),
+          ml: Math.min(250, Math.max(0, Number(b?.ml) || 0)),
+        }));
+        cursorY += 12;
+        if (cursorY > pageHeight - margin) { doc.addPage(); cursorY = margin; }
+        doc.setDrawColor(200);
+        doc.line(margin, cursorY, pageWidth - margin, cursorY);
+        cursorY += 18;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.text("Bebidas e infusiones", margin, cursorY);
+        cursorY += 16;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(11);
+        normalizedBeverages.forEach((b) => {
+          const momentoLabel = b.momento && b.momento.toLowerCase() !== "general" ? b.momento : "General";
+          const mlLabel = b.ml > 0 ? `${b.ml} ml` : null;
+          const line = [b.nombre, momentoLabel, mlLabel].filter(Boolean).join(" • ");
+          const wrapped = doc.splitTextToSize(line, usableWidth);
+          wrapped.forEach((ln: string) => {
+            if (cursorY > pageHeight - margin) { doc.addPage(); cursorY = margin; }
+            doc.text(ln, margin + 12, cursorY);
+            cursorY += 14;
+          });
+          cursorY += 2;
+        });
+      }
 
       doc.save("Consejo-FitBalance.pdf");
     } catch (e) {
@@ -1801,12 +1945,6 @@ export default function OnboardingAdvicePage() {
   return (
     <OnboardingLayout>
         <OnboardingHeader title="Consejo personalizado" subtitle="Aquí verás recomendaciones y tu plan semanal sugerido según lo que seleccionaste." />
-        {typeof hydrationLiters === 'number' && hydrationLiters > 0 && (
-          <div className="mb-4 text-xs text-muted-foreground">
-            Agua (objetivo diario): <span className="font-medium text-foreground">{hydrationLiters.toFixed(2)} L</span>
-          </div>
-        )}
-
         {/* Resumen movido a /onboarding/review para evitar redundancia */}
         <OnboardingCard>
           {loading ? (

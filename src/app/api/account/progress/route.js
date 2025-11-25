@@ -38,6 +38,22 @@ export async function GET(request) {
     if (!userId) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
+    const dateParam = searchParams.get("date") || searchParams.get("on");
+
+    if (dateParam) {
+      const base = new Date(`${dateParam}T00:00:00`);
+      if (Number.isNaN(base.getTime())) {
+        return NextResponse.json({ error: "Fecha inválida" }, { status: 400 });
+      }
+      const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+      const dayEnd = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1);
+      const item = await prisma.progresoCorporal.findFirst({
+        where: { usuarioId: Number(userId), fecha: { gte: dayStart, lt: dayEnd } },
+        orderBy: { fecha: "desc" },
+      });
+      return NextResponse.json({ item: item ?? null, items: item ? [item] : [] }, { status: 200 });
+    }
+
     const limit = Math.min(90, Math.max(1, Number(searchParams.get("limit") || 12)));
 
     const items = await prisma.progresoCorporal.findMany({

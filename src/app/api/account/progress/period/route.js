@@ -3,6 +3,8 @@ import prisma from "@/lib/db/prisma";
 import { getToken } from "next-auth/jwt";
 import jwt from "jsonwebtoken"; // legacy
 
+const ALLOWED_INTERVALS = [1, 2, 3, 4];
+
 async function resolveUserId(req) {
   try {
     const token = await getToken({ req });
@@ -46,7 +48,7 @@ export async function GET(request) {
     const u = await prisma.usuario.findUnique({ where: { id: Number(userId) }, select: { measurement_interval_weeks: true } });
     const weeksParam = searchParams.get("weeks");
     const weeks = weeksParam ? Number(weeksParam) : Number(u?.measurement_interval_weeks ?? 2);
-    const safeWeeks = [2,3,4].includes(weeks) ? weeks : 2;
+    const safeWeeks = ALLOWED_INTERVALS.includes(weeks) ? weeks : 2;
 
     const start = new Date(ending);
     start.setUTCDate(start.getUTCDate() - safeWeeks * 7);
