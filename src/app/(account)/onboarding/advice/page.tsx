@@ -166,6 +166,16 @@ function normalizeSummary(raw: any | null, profile?: any | null) {
     }
     return null;
   };
+  const pickDateIso = (...keys: string[]) => {
+    for (const k of keys) {
+      if (!(k in s)) continue;
+      const raw = (s as any)[k];
+      if (!raw) continue;
+      const d = new Date(raw);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+    return null;
+  };
   const out: any = {};
   out.tmb = pick('tmb','TMB','TMB_kcal','tmb_kcal');
   out.tdee = pick('tdee','TDEE','tdee_kcal','TDEE_kcal');
@@ -175,6 +185,11 @@ function normalizeSummary(raw: any | null, profile?: any | null) {
   out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g','proteinas_objetivo','protein');
   out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g','grasas_objetivo','fat');
   out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g','carbohidratos_objetivo','carbs','carbohydrates');
+  out.peso_actual_kg = pick('peso_actual_kg','peso_actual','weight_kg','current_weight');
+  out.peso_objetivo_kg = pick('peso_objetivo_kg','peso_meta','goal_weight','target_weight','target_weight_kg');
+  out.tiempo_estimado_semanas = pick('tiempo_estimado_semanas','eta_semanas','tiempo_meta_semanas','estimated_weeks');
+  out.tiempo_estimado_meses = pick('tiempo_estimado_meses','eta_meses','estimated_months');
+  out.fecha_meta_estimada = pickDateIso('fecha_meta_estimada','meta_fecha','objetivo_fecha_estimada_iso','goal_date_iso');
 
   // Derivar TDEE desde el perfil si falta
   if (out.tdee == null && profile && typeof profile === 'object') {
@@ -248,6 +263,40 @@ function normalizeSummary(raw: any | null, profile?: any | null) {
   if (out.ritmo_peso_kg_sem == null && out.deficit_superavit_kcal != null) {
     // 7700 kcal ~ 1 kg
     out.ritmo_peso_kg_sem = Number(((out.deficit_superavit_kcal * 7) / 7700) * -1);
+  }
+
+  // 5) Estimar tiempo para alcanzar el objetivo de peso
+  const profileWeight = profile ? num((profile as any).peso_kg ?? (profile as any).weight_kg) : null;
+  const profileTarget = profile ? num((profile as any).peso_objetivo_kg ?? (profile as any).target_weight_kg) : null;
+  const currentWeight = out.peso_actual_kg ?? profileWeight;
+  const targetWeight = out.peso_objetivo_kg ?? profileTarget;
+  if (currentWeight != null && targetWeight != null && Math.abs(currentWeight - targetWeight) >= 0.1) {
+    const deltaKg = Math.abs(currentWeight - targetWeight);
+    out.delta_peso_kg = Number(deltaKg.toFixed(2));
+    let ritmoAbs = out.ritmo_peso_kg_sem != null ? Math.abs(Number(out.ritmo_peso_kg_sem)) : null;
+    if ((!ritmoAbs || ritmoAbs < 0.01) && out.deficit_superavit_kcal != null) {
+      ritmoAbs = Math.abs(((Number(out.deficit_superavit_kcal) * 7) / 7700));
+      if (!Number.isNaN(ritmoAbs) && ritmoAbs > 0.01 && out.ritmo_peso_kg_sem == null) {
+        out.ritmo_peso_kg_sem = (currentWeight > targetWeight ? -ritmoAbs : ritmoAbs);
+      }
+    }
+    if (!ritmoAbs || ritmoAbs < 0.01) {
+      const vel = String(profile?.velocidad_cambio || '').toLowerCase();
+      if (/rap/i.test(vel)) ritmoAbs = 0.9;
+      else if (/moder/i.test(vel)) ritmoAbs = 0.6;
+      else if (/lent|suav/i.test(vel)) ritmoAbs = 0.4;
+      else ritmoAbs = 0.5;
+    }
+    if (ritmoAbs && ritmoAbs > 0.01) {
+      const weeks = Math.min(156, Math.max(0.5, deltaKg / ritmoAbs));
+      if (out.tiempo_estimado_semanas == null) out.tiempo_estimado_semanas = Number(weeks.toFixed(1));
+      if (out.tiempo_estimado_meses == null) out.tiempo_estimado_meses = Number((weeks / 4.345).toFixed(1));
+      if (!out.fecha_meta_estimada) {
+        const eta = new Date();
+        eta.setDate(eta.getDate() + Math.round(weeks * 7));
+        out.fecha_meta_estimada = eta.toISOString();
+      }
+    }
   }
   return out;
 }
@@ -467,6 +516,30 @@ export default function OnboardingAdvicePage() {
   // Modo estricto: si la URL trae ai_strict=1, no forzamos fallback del lado cliente
   const [aiStrict, setAiStrict] = useState<boolean>(true);
   const [pdfDebug, setPdfDebug] = useState<boolean>(false);
+  const formatEtaDate = (iso?: string | null) => {
+    if (!iso) return null;
+    try {
+      return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(iso));
+    } catch {
+      return iso;
+    }
+  };
+  const summaryHighlights = useMemo(() => {
+    if (!normSummary && hydrationLiters == null) return null;
+    const kcal = normSummary?.kcal_objetivo != null ? `${Math.round(normSummary.kcal_objetivo)} kcal` : "—";
+    const prote = normSummary?.proteinas_g != null ? `${Math.round(normSummary.proteinas_g)} g` : "—";
+    const fats = normSummary?.grasas_g != null ? `${Math.round(normSummary.grasas_g)} g` : "—";
+    const carbs = normSummary?.carbohidratos_g != null ? `${Math.round(normSummary.carbohidratos_g)} g` : "—";
+    const fallbackWater = normSummary?.agua_litros_obj != null ? `${Number(normSummary.agua_litros_obj).toFixed(2)} L` : "—";
+    const water = typeof hydrationLiters === "number" ? `${hydrationLiters.toFixed(2)} L` : fallbackWater;
+    const etaWeeks = typeof normSummary?.tiempo_estimado_semanas === "number" ? normSummary.tiempo_estimado_semanas : null;
+    const etaText = etaWeeks != null ? `${etaWeeks.toFixed(1)} sem` : "—";
+    const etaMonths = typeof normSummary?.tiempo_estimado_meses === "number" ? `${normSummary.tiempo_estimado_meses.toFixed(1)} meses` : null;
+    const etaDate = formatEtaDate(normSummary?.fecha_meta_estimada || null) ?? "—";
+    const delta = typeof normSummary?.delta_peso_kg === "number" ? `${normSummary.delta_peso_kg.toFixed(1)} kg por cambiar` : null;
+    const ritmo = typeof normSummary?.ritmo_peso_kg_sem === "number" ? `${Math.abs(normSummary.ritmo_peso_kg_sem).toFixed(2)} kg/sem` : null;
+    return { kcal, prote, fats, carbs, water, etaText, etaMonths, etaDate, delta, ritmo };
+  }, [hydrationLiters, normSummary]);
   useEffect(() => {
     try {
       const u = new URL(window.location.href);
@@ -1624,6 +1697,12 @@ export default function OnboardingAdvicePage() {
             const carbs = Math.round((Number(s.kcal_objetivo) - (prot * 4) - (Number(s.grasas_g) * 9)) / 4);
             s.carbohidratos_g = Math.max(0, carbs);
           }
+          if (typeof s.tiempo_estimado_semanas === "number" && s.tiempo_estimado_semanas > 0) {
+            applyBody.objetivo_eta_semanas = s.tiempo_estimado_semanas;
+          }
+          if (typeof s.fecha_meta_estimada === "string") {
+            applyBody.objetivo_eta_fecha = s.fecha_meta_estimada;
+          }
           applyBody.summary = s;
         }
         if (typeof hydrationLiters === "number" && hydrationLiters > 0) applyBody.agua_litros_obj = hydrationLiters;
@@ -1725,6 +1804,16 @@ export default function OnboardingAdvicePage() {
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 40;
       const usableWidth = pageWidth - margin * 2;
+      const formatEtaDate = (value?: string | null) => {
+        if (!value) return null;
+        try {
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) return value;
+          return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+        } catch {
+          return value;
+        }
+      };
 
       // Título
       doc.setFont("helvetica", "bold");
@@ -1784,12 +1873,25 @@ export default function OnboardingAdvicePage() {
         doc.text("Resumen", margin, cursorY);
         cursorY += 18;
         doc.setFont("helvetica", "normal");
+        const etaWeeks = typeof sNorm?.tiempo_estimado_semanas === "number" ? sNorm.tiempo_estimado_semanas : null;
+        const etaMonths = typeof sNorm?.tiempo_estimado_meses === "number" ? sNorm.tiempo_estimado_meses : null;
+        const etaLabel = etaWeeks != null
+          ? etaMonths != null
+            ? `${etaWeeks.toFixed(1)} sem (~${etaMonths.toFixed(1)} meses)`
+            : `${etaWeeks.toFixed(1)} sem`
+          : "—";
+        const etaDateRaw = sNorm?.fecha_meta_estimada ?? sNorm?.fecha_meta_estimada_iso ?? sNorm?.objetivo_eta_fecha ?? null;
+        const etaDateFormatted = etaDateRaw ? formatEtaDate(etaDateRaw) : null;
+        const etaDateLabel = etaDateFormatted ?? "—";
+
         const rows: Array<[string, string]> = [
           ["TMB", sNorm?.tmb != null ? `${Math.round(sNorm.tmb)} kcal` : "—"],
           ["TDEE", sNorm?.tdee != null ? `${Math.round(sNorm.tdee)} kcal` : "—"],
           ["Kcal objetivo", sNorm?.kcal_objetivo != null ? `${Math.round(sNorm.kcal_objetivo)} kcal` : "—"],
           ["Déficit/Superávit", sNorm?.deficit_superavit_kcal != null ? `${Math.round(sNorm.deficit_superavit_kcal)} kcal/día` : "—"],
           ["Ritmo estimado", sNorm?.ritmo_peso_kg_sem != null ? `${Number(sNorm.ritmo_peso_kg_sem).toFixed(2)} kg/sem` : "—"],
+          ["Tiempo estimado", etaLabel],
+          ["Meta prevista", etaDateLabel],
           ["Proteínas", sNorm?.proteinas_g != null ? `${Math.round(sNorm.proteinas_g)} g` : "—"],
           ["Grasas", sNorm?.grasas_g != null ? `${Math.round(sNorm.grasas_g)} g` : "—"],
           ["Carbohidratos", sNorm?.carbohidratos_g != null ? `${Math.round(sNorm.carbohidratos_g)} g` : "—"],
@@ -2019,6 +2121,8 @@ export default function OnboardingAdvicePage() {
             </>
           )}
         </OnboardingCard>
+
+        {/* Tarjeta de resumen removida según solicitud para evitar mostrar duplicados en onboarding/advice */}
 
         {/* Plan semanal sugerido (compacto por días) */}
         <OnboardingCard>

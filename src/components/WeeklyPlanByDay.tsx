@@ -62,7 +62,7 @@ export default function WeeklyPlanByDay({ weekly, className, schedule, beverages
           </button>
         ))}
       </div>
-      <Card className="mt-3 p-3">
+      <Card className="mt-3 w-full overflow-hidden rounded-xl border bg-muted/30 p-4 shadow-sm">
         {(() => {
           const d = days[sel];
           if (!d) return <div className="text-sm text-muted-foreground">Sin datos</div>;
@@ -102,11 +102,11 @@ export default function WeeklyPlanByDay({ weekly, className, schedule, beverages
                         })
                       : [];
                     return (
-                      <div key={i} className="grid grid-cols-[9rem_1fr] gap-2 items-start">
+                      <div key={i} className="grid items-start gap-2 sm:grid-cols-[9rem_1fr]">
                         <div className="text-muted-foreground leading-snug pr-2">
                           {labelForTipo(m.tipo)}{t ? <span className="ml-1 text-xs">({t})</span> : null}:
                         </div>
-                        <div className="min-w-0 leading-snug">
+                        <div className="min-w-0 leading-snug break-words">
                           <div className="flex flex-wrap items-baseline gap-1">
                             {(() => {
                               const rawName = m.receta?.nombre ?? '';
@@ -123,8 +123,8 @@ export default function WeeklyPlanByDay({ weekly, className, schedule, beverages
                             })()}
                             {m.targetProteinG ? <span className="text-muted-foreground shrink-0">• {m.targetProteinG} g proteína</span> : null}
                           </div>
-                          {Array.isArray(m.itemsText) && m.itemsText.length > 0 && (
-                            <ul className="mt-1 list-disc pl-5 space-y-0.5 text-muted-foreground">
+                            {Array.isArray(m.itemsText) && m.itemsText.length > 0 && (
+                            <ul className="mt-1 list-disc pl-5 space-y-0.5 text-muted-foreground break-words">
                               {m.itemsText.map((tItem, j) => (
                                 <li key={j}>{tItem}</li>
                               ))}

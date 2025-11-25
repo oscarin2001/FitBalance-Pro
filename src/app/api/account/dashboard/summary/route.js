@@ -74,6 +74,9 @@ export async function GET(request) {
         fecha_nacimiento: true,
         nivel_actividad: true,
         plan_ai: true,
+        peso_objetivo_kg: true,
+        objetivo_eta_semanas: true,
+        objetivo_eta_fecha: true,
       },
     });
 
@@ -117,6 +120,12 @@ export async function GET(request) {
       carbohidratos: usuario?.carbohidratos_g_obj ?? null,
       agua_litros: usuario?.agua_litros_obj ?? null,
     };
+    let projection = {
+      delta_kg: null,
+      ritmo_kg_sem: null,
+      eta_weeks: usuario?.objetivo_eta_semanas ?? null,
+      eta_date_iso: usuario?.objetivo_eta_fecha ? new Date(usuario.objetivo_eta_fecha).toISOString() : null,
+    };
 
     // Si faltan valores, intentar completar desde plan_ai.summary
     try {
@@ -128,6 +137,19 @@ export async function GET(request) {
         const p = num(s.proteinas_g) ?? num(s.proteina_g) ?? num(s.proteinas) ?? num(s.protein_g) ?? null;
         let g = num(s.grasas_g) ?? num(s.grasas) ?? num(s.fat_g) ?? num(s.grasas_diarias_g) ?? null;
         let c = num(s.carbohidratos_g) ?? num(s.carbohidratos) ?? num(s.carbs_g) ?? num(s.carbohidratos_diarios_g) ?? null;
+        const ritmo = num(s.ritmo_peso_kg_sem) ?? num(s.ritmo_kg_sem) ?? null;
+        if (ritmo != null && projection.ritmo_kg_sem == null) {
+          projection.ritmo_kg_sem = Number(ritmo);
+        }
+        const etaFromSummary = num(s.tiempo_estimado_semanas) ?? num(s.eta_semanas) ?? null;
+        if (etaFromSummary != null && projection.eta_weeks == null) {
+          projection.eta_weeks = etaFromSummary;
+        }
+        const etaDateSummary = s.fecha_meta_estimada ?? s.meta_fecha ?? s.objetivo_fecha_estimada_iso;
+        if (etaDateSummary && !projection.eta_date_iso) {
+          const d = new Date(etaDateSummary);
+          if (!isNaN(d.getTime())) projection.eta_date_iso = d.toISOString();
+        }
 
         let kcal = objetivos.kcal ?? kcal_obj ?? null;
         // 1) kcal desde TDEE y déficit/superávit explícito
@@ -224,6 +246,30 @@ export async function GET(request) {
       }
     } catch {}
 
+    const currentWeight = typeof usuario?.peso_kg === 'number' ? usuario.peso_kg : null;
+    const targetWeight = typeof usuario?.peso_objetivo_kg === 'number' ? usuario.peso_objetivo_kg : null;
+    if (currentWeight != null && targetWeight != null) {
+      projection.delta_kg = Number(Math.abs(currentWeight - targetWeight).toFixed(1));
+    }
+    if (projection.delta_kg != null) {
+      const ritmoAbs = projection.ritmo_kg_sem != null ? Math.abs(projection.ritmo_kg_sem) : null;
+      if ((projection.eta_weeks == null || projection.eta_weeks <= 0) && ritmoAbs && ritmoAbs > 0.01) {
+        projection.eta_weeks = Number(Math.min(156, Math.max(0.5, projection.delta_kg / ritmoAbs)).toFixed(1));
+      }
+      if (!projection.eta_date_iso && projection.eta_weeks != null) {
+        const etaDate = new Date();
+        etaDate.setDate(etaDate.getDate() + Math.round(projection.eta_weeks * 7));
+        projection.eta_date_iso = etaDate.toISOString();
+      }
+    }
+    if (projection.eta_weeks == null && typeof usuario?.objetivo_eta_semanas === 'number') {
+      projection.eta_weeks = usuario.objetivo_eta_semanas;
+    }
+    if (!projection.eta_date_iso && usuario?.objetivo_eta_fecha) {
+      const d = new Date(usuario.objetivo_eta_fecha);
+      if (!isNaN(d.getTime())) projection.eta_date_iso = d.toISOString();
+    }
+
     const restantes = objetivos.kcal != null
       ? Math.max(0, objetivos.kcal - totals.calorias)
       : null;
@@ -244,6 +290,7 @@ export async function GET(request) {
         objetivo_litros: objetivos.agua_litros ?? null,
         completado: todayHydration?.completado ?? false,
       },
+      projection,
     });
   } catch (e) {
     try { console.error("/api/account/dashboard/summary error", e); } catch {}

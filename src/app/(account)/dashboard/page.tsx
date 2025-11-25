@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Droplet, Plus, Flame, Egg, Wheat } from "lucide-react";
+import { Droplet, Flame, Egg, Wheat } from "lucide-react";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
  
@@ -15,6 +15,7 @@ type Summary = {
   kcal_restantes: number | null;
   macros_restantes: { proteinas: number | null; grasas: number | null; carbohidratos: number | null };
   hidratacion: { hoy_litros: number; objetivo_litros: number | null; completado: boolean };
+  projection: { delta_kg: number | null; ritmo_kg_sem: number | null; eta_weeks: number | null; eta_date_iso: string | null };
 };
 
 const COLORS = ["#4F46E5", "#16A34A", "#F59E0B"]; // Prote, Grasas, Carbs
@@ -370,6 +371,16 @@ export default function DashboardPage() {
   }, [data]);
 
   const noMacroData = useMemo(() => pieState.data.reduce((a, b) => a + (b.value || 0), 0) === 0, [pieState]);
+  const etaInfo = useMemo(() => {
+    const proj = data?.projection;
+    const etaWeeks = typeof proj?.eta_weeks === "number" ? proj.eta_weeks : null;
+    const etaLabel = etaWeeks != null ? `${etaWeeks.toFixed(1)} sem` : "—";
+    const etaMonths = etaWeeks != null ? `${(etaWeeks / 4.345).toFixed(1)} meses` : null;
+    const etaDate = proj?.eta_date_iso ? formatDateLong(proj.eta_date_iso) : "—";
+    const delta = typeof proj?.delta_kg === "number" ? `${proj.delta_kg.toFixed(1)} kg pendientes` : null;
+    const ritmo = typeof proj?.ritmo_kg_sem === "number" ? `${proj.ritmo_kg_sem >= 0 ? '+' : ''}${proj.ritmo_kg_sem.toFixed(2)} kg/sem` : null;
+    return { etaLabel, etaMonths, etaDate, delta, ritmo };
+  }, [data?.projection]);
 
   const progressTrend = useMemo(() => {
     const delta = progressStats?.deltaKg;
@@ -457,38 +468,6 @@ export default function DashboardPage() {
     });
   }, [progressStats?.entries]);
 
-  async function addWater(liters: number) {
-    try {
-      // Límite exacto al objetivo diario
-      const objective = data?.hidratacion.objetivo_litros ?? 2; // fallback 2L si no hay objetivo
-      const maxCap = Math.max(objective, 2);
-      const current = data?.hidratacion.hoy_litros ?? 0;
-      if (current >= maxCap) {
-        toast.success("¡Felicidades! Ya alcanzaste tu consumo máximo de agua por hoy.");
-        return;
-      }
-      // Ajustar para no exceder el máximo
-      const allowedDelta = Math.min(liters, Math.max(0, maxCap - current));
-
-      const res = await fetch("/api/account/hydration/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deltaLitros: allowedDelta }),
-      });
-      if (!res.ok) throw new Error();
-      const upd = await res.json();
-      setData((prev) => prev ? { ...prev, hidratacion: { ...prev.hidratacion, ...upd } } as Summary : prev);
-      const nextVal = (data?.hidratacion.hoy_litros ?? 0) + allowedDelta;
-      if (nextVal >= maxCap - 1e-6) {
-        toast.success("¡Felicidades! Ya alcanzaste tu consumo máximo de agua por hoy.");
-      } else {
-        toast.success("Hidratación actualizada");
-      }
-    } catch {
-      toast.error("No se pudo registrar el agua");
-    }
-  }
-
   return (
     <div className="p-6">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -544,7 +523,7 @@ export default function DashboardPage() {
                 : undefined;
 
               return (
-                <div className="grid gap-2 text-sm md:grid-cols-3">
+                <div className="grid gap-2 text-sm md:grid-cols-5">
                   <div>
                     <div className="text-muted-foreground">IMC</div>
                     <div className="font-medium">{bmi != null ? bmi.toFixed(1) : "—"} ({bmiCat(bmi)})</div>
@@ -556,6 +535,21 @@ export default function DashboardPage() {
                   <div>
                     <div className="text-muted-foreground">Velocidad</div>
                     <div className="font-medium">{profile.velocidad_cambio ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Tiempo estimado</div>
+                    <div className="font-medium">{etaInfo.etaLabel}</div>
+                    {etaInfo.etaMonths && (
+                      <div className="text-xs text-muted-foreground">
+                        ≈ {etaInfo.etaMonths}
+                        {etaInfo.delta && <span className="ml-1">• {etaInfo.delta}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Meta prevista</div>
+                    <div className="font-medium">{etaInfo.etaDate}</div>
+                    {etaInfo.ritmo && <div className="text-xs text-muted-foreground">Ritmo: {etaInfo.ritmo}</div>}
                   </div>
                   {extra && (
                     <div className="md:col-span-3 text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">{extra}</div>
@@ -601,8 +595,8 @@ export default function DashboardPage() {
       )}
 
       <div className="text-xs uppercase text-muted-foreground">Resumen de hoy</div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Flame className="h-5 w-5" /> Calorías</CardTitle>
             <CardDescription>Objetivo vs consumido</CardDescription>
@@ -630,7 +624,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="md:col-span-2">
+        <Card className="lg:col-span-2">
           <CardHeader>
             <div className="flex items-center justify-between gap-2">
               <CardTitle>
@@ -710,8 +704,6 @@ export default function DashboardPage() {
           )}
         </Card>
       </div>
-
-      {/* Se removieron las tarjetas de Hidratación y Resumen del plan (fusionadas arriba). */}
 
       {/* Adherencia agregada: comparación semanas/meses */}
       <div className="text-xs uppercase text-muted-foreground">Actividad reciente</div>

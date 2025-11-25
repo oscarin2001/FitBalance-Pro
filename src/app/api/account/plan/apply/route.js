@@ -43,6 +43,8 @@ export async function POST(request) {
     const beverages = Array.isArray(body?.beverages) ? body.beverages : null; // [{nombre, ml, momento}]
     const weekly = Array.isArray(body?.weekly) ? body.weekly : null; // vista semanal final [{ day, active, meals: [...] }]
     const aguaLitros = body?.agua_litros_obj;
+    const etaWeeks = Number(body?.objetivo_eta_semanas);
+    const etaDateRaw = body?.objetivo_eta_fecha;
 
     const data = {};
     if (summary && typeof summary === "object") {
@@ -64,8 +66,22 @@ export async function POST(request) {
       if (Number.isFinite(prot)) data.proteinas_g_obj = prot;
       if (Number.isFinite(grasas)) data.grasas_g_obj = grasas;
       if (Number.isFinite(carbos)) data.carbohidratos_g_obj = carbos;
+      const summaryEtaWeeks = Number(summary.tiempo_estimado_semanas ?? summary.eta_semanas ?? summary.tiempo_meta_semanas);
+      if (!Number.isFinite(etaWeeks) && Number.isFinite(summaryEtaWeeks)) {
+        data.objetivo_eta_semanas = summaryEtaWeeks;
+      }
+      const summaryEtaDateRaw = summary.fecha_meta_estimada ?? summary.meta_fecha ?? summary.objetivo_fecha_estimada_iso;
+      if (!etaDateRaw && summaryEtaDateRaw) {
+        const d = new Date(summaryEtaDateRaw);
+        if (!isNaN(d.getTime())) data.objetivo_eta_fecha = d;
+      }
     }
     if (typeof aguaLitros === "number") data.agua_litros_obj = aguaLitros;
+    if (Number.isFinite(etaWeeks) && etaWeeks > 0) data.objetivo_eta_semanas = etaWeeks;
+    if (etaDateRaw) {
+      const etaDate = new Date(etaDateRaw);
+      if (!isNaN(etaDate.getTime())) data.objetivo_eta_fecha = etaDate;
+    }
 
     if (advice || summary || beverages || weekly) {
       data.plan_ai = { advice: advice || null, summary: summary || null };

@@ -42,6 +42,8 @@ model Usuario {
   grasas_g_obj           Float?
   carbohidratos_g_obj    Float?
   agua_litros_obj        Float?
+  objetivo_eta_semanas   Float? // Semanas estimadas para alcanzar el objetivo de peso
+  objetivo_eta_fecha     DateTime? // Fecha estimada (aproximada) de cumplimiento del objetivo
   plan_ai                Json?
   hidratacion            HidratacionDia[]
   // Relaciones inversas requeridas por Prisma

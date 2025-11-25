@@ -71,6 +71,18 @@ function normalizeSummary(raw: any | null) {
     }
     return null;
   };
+  const pickDateIso = (...keys: string[]) => {
+    for (const k of keys) {
+      if (!(k in s)) continue;
+      const rawVal = s[k];
+      if (!rawVal) continue;
+      try {
+        const date = new Date(rawVal);
+        if (!Number.isNaN(date.getTime())) return date.toISOString();
+      } catch {}
+    }
+    return null;
+  };
   const out: any = {};
   out.tmb = pick('tmb','TMB','TMB_kcal','tmb_kcal');
   out.tdee = pick('tdee','TDEE','tdee_kcal','TDEE_kcal');
@@ -80,6 +92,10 @@ function normalizeSummary(raw: any | null) {
   out.proteinas_g = pick('proteinas_g','proteina_g','proteinas','protein_g','proteinas_objetivo','protein');
   out.grasas_g = pick('grasas_g','grasas','fat_g','grasas_diarias_g','grasas_objetivo','fat');
   out.carbohidratos_g = pick('carbohidratos_g','carbohidratos','carbs_g','carbohidratos_diarios_g','carbohidratos_objetivo','carbs','carbohydrates');
+  out.agua_litros_obj = pick('agua_litros_obj','agua_litros','agua','water_liters','hidratacion_objetivo');
+  out.tiempo_estimado_semanas = pick('tiempo_estimado_semanas','eta_semanas','tiempo_meta_semanas','estimated_weeks','projection_eta_weeks','objetivo_eta_semanas');
+  out.tiempo_estimado_meses = pick('tiempo_estimado_meses','eta_meses','estimated_months','projection_eta_months');
+  out.fecha_meta_estimada_iso = pickDateIso('fecha_meta_estimada','meta_fecha','fecha_meta_estimada_iso','goal_date_iso','projection_eta_date_iso','objetivo_eta_fecha');
   return out;
 }
 
@@ -184,6 +200,16 @@ export default function ExportPlanPage() {
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 40;
       const usableWidth = pageWidth - margin * 2;
+      const formatEtaDate = (value?: string | null) => {
+        if (!value) return null;
+        try {
+          const date = new Date(value);
+          if (!Number.isNaN(date.getTime())) {
+            return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+          }
+        } catch {}
+        return value ?? null;
+      };
 
       // Título
       doc.setFont("helvetica", "bold");
@@ -198,9 +224,9 @@ export default function ExportPlanPage() {
 
       // Resumen estructurado (si existe)
       let cursorY = margin + 40;
-      const sum = summary?.summary || summary?.objetivos || null;
-      // Normalizar para asegurar números (evita "—" por NaN)
-      const s = normalizeSummary(sum) || sum;
+      const sum = summary?.summary ?? summary ?? null;
+      const normalized = sum ? normalizeSummary(sum) : null;
+      const s = normalized || sum;
       if (s) {
         doc.setTextColor(0);
         doc.setFont("helvetica", "bold");
@@ -208,15 +234,28 @@ export default function ExportPlanPage() {
         doc.text("Resumen", margin, cursorY);
         cursorY += 18;
         doc.setFont("helvetica", "normal");
+        const etaWeeks = typeof normalized?.tiempo_estimado_semanas === "number" ? normalized.tiempo_estimado_semanas : null;
+        const etaMonths = typeof normalized?.tiempo_estimado_meses === "number" ? normalized.tiempo_estimado_meses : null;
+        const etaLabel = etaWeeks != null
+          ? etaMonths != null
+            ? `${etaWeeks.toFixed(1)} sem (~${etaMonths.toFixed(1)} meses)`
+            : `${etaWeeks.toFixed(1)} sem`
+          : "—";
+        const etaDateRaw = normalized?.fecha_meta_estimada_iso ?? null;
+        const etaDateLabel = etaDateRaw ? (formatEtaDate(etaDateRaw) ?? etaDateRaw) : "—";
+        const aguaGoal = typeof normalized?.agua_litros_obj === "number" ? normalized.agua_litros_obj : null;
         const rows: Array<[string, string]> = [
           ["TMB", s.tmb != null ? `${Math.round(s.tmb)} kcal` : "—"],
           ["TDEE", s.tdee != null ? `${Math.round(s.tdee)} kcal` : "—"],
           ["Kcal objetivo", s.kcal_objetivo != null ? `${Math.round(s.kcal_objetivo)} kcal` : "—"],
           ["Déficit/Superávit", s.deficit_superavit_kcal != null ? `${Math.round(s.deficit_superavit_kcal)} kcal/día` : "—"],
           ["Ritmo estimado", s.ritmo_peso_kg_sem != null ? `${Number(s.ritmo_peso_kg_sem).toFixed(2)} kg/sem` : "—"],
+          ["Tiempo estimado", etaLabel],
+          ["Meta prevista", etaDateLabel],
           ["Proteínas", s.proteinas_g != null ? `${Math.round(s.proteinas_g)} g` : "—"],
           ["Grasas", s.grasas_g != null ? `${Math.round(s.grasas_g)} g` : "—"],
           ["Carbohidratos", s.carbohidratos_g != null ? `${Math.round(s.carbohidratos_g)} g` : "—"],
+          ["Agua (objetivo)", aguaGoal != null ? `${aguaGoal.toFixed(2)} L` : "—"],
         ];
         const leftColWidth = 140;
         const lineHeight = 16;

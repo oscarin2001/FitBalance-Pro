@@ -305,9 +305,9 @@ Reglas para el PLAN SEMANAL:
 - Considera el objetivo calórico y de macronutrientes del usuario
 
 Salida estructurada al final, cada bloque en su línea:
-- JSON_SUMMARY {...}
+- JSON_SUMMARY {...} (incluye tmb, tdee, kcal_objetivo, deficit_superavit_kcal, ritmo_peso_kg_sem, macros y agrega obligatoriamente "tiempo_estimado_semanas" (número) y "fecha_meta_estimada_iso" (fecha ISO) calculados a partir del peso actual vs. objetivo y el ritmo semanal)
 - JSON_MEALS {...} (con comidas variadas y específicas)
-- JSON_HYDRATION {...}
+- JSON_HYDRATION {...} (con "litros" diarios recomendados derivados del peso y objetivo)
 - JSON_BEVERAGES {...}
 - OPCIONAL JSON_MEALS_VARIANTS {...}
 ${wantTypesText}`;
@@ -366,7 +366,22 @@ ${wantTypesText}`;
         const meals = { items: basic.map(m => ({ ...m, nombre: m.nombre || (m.tipo + ' base') })) };
         const hydration = { litros: 2 };
         const beverages = { items: [] };
+        const deltaKg = (peso && user.peso_objetivo_kg) ? Math.abs(peso - user.peso_objetivo_kg) : null;
+        const ritmoAbs = Math.abs(ritmo);
+        let etaWeeks = null;
+        if (deltaKg && ritmoAbs > 0.01) {
+          etaWeeks = Math.min(156, Math.max(0.5, deltaKg / ritmoAbs));
+        }
+        const etaDate = etaWeeks ? (() => { const d = new Date(); d.setDate(d.getDate() + Math.round(etaWeeks * 7)); return d; })() : null;
         const summary = { tmb: tmb ? Math.round(tmb) : 0, tdee: tdee ? Math.round(tdee) : 0, kcal_objetivo: kcalObjetivo || 0, deficit_superavit_kcal: delta, ritmo_peso_kg_sem: ritmo, proteinas_g: prote, grasas_g: grasas, carbohidratos_g: carbos };
+        if (peso != null) summary.peso_actual_kg = peso;
+        if (user.peso_objetivo_kg) summary.peso_objetivo_kg = user.peso_objetivo_kg;
+        if (etaWeeks) {
+          summary.tiempo_estimado_semanas = Number(etaWeeks.toFixed(1));
+          summary.tiempo_estimado_meses = Number((etaWeeks / 4.345).toFixed(1));
+          if (etaDate) summary.fecha_meta_estimada = etaDate.toISOString();
+          summary.delta_peso_kg = Number(deltaKg?.toFixed(2) || 0);
+        }
         const explanation = `# Consejo generado localmente (fallback)\n\nSe produjo un timeout o error con el proveedor de IA. Generamos un plan base calculado localmente para que no te quedes sin información. Cuando reintentes más tarde, se intentará obtener una versión enriquecida con más variedad y análisis narrativo.\n\n## Resumen calculado\n- TMB (estimado): ${summary.tmb || '—'} kcal\n- TDEE (estimado): ${summary.tdee || '—'} kcal\n- Ajuste objetivo: ${delta} kcal/día\n- Kcal objetivo: ${summary.kcal_objetivo || '—'} kcal\n- Ritmo estimado: ${summary.ritmo_peso_kg_sem || 0} kg/sem\n- Proteínas: ${summary.proteinas_g} g\n- Grasas: ${summary.grasas_g} g\n- Carbohidratos: ${summary.carbohidratos_g} g\n\n## Recomendaciones base\n* Prioriza distribución pareja de proteína en cada comida.\n* Mantén verduras/fibra en 2-3 comidas al día.\n* Hidrátate de forma constante (2 L objetivo base).\n\n## Próximo paso\nPulsa “Regenerar” para intentar una versión completa cuando el servicio esté disponible.\n`;
         const content = `${explanation}\nJSON_SUMMARY: ${JSON.stringify(summary)}\nJSON_MEALS: ${JSON.stringify(meals)}\nJSON_HYDRATION: ${JSON.stringify(hydration)}\nJSON_BEVERAGES: ${JSON.stringify(beverages)}`;
         return { content, usedModel: 'fallback-local', genMs: Date.now() - t0 };
@@ -378,8 +393,7 @@ ${wantTypesText}`;
 
     async function generateFullAdvice(promptText, opts = { forceLong: false }) {
       const FULL_PROMPT = `Eres un experto en nutrición y entrenamiento, preciso y claro.\n\n${promptText}`;
-      async function 
-      runModel(modelName, fullPrompt) {
+      async function runModel(modelName, fullPrompt) {
         return generateText({ model: google(modelName), prompt: fullPrompt, temperature: 0.7, maxTokens: 8192 });
       }
       async function withTimeout(promise, ms) {
@@ -520,6 +534,132 @@ ${wantTypesText}`;
         const ritmo_peso_kg_sem = delta !== 0 ? +( (delta * 7) / 7700 ).toFixed(2) : 0;
         return { tmb, tdee, kcal_objetivo, deficit_superavit_kcal: delta, ritmo_peso_kg_sem, proteinas_g, grasas_g, carbohidratos_g };
       } catch { return null; }
+    }
+
+    function toNumberOrNull(value) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string') {
+        const normalized = value.replace(',', '.');
+        const match = normalized.match(/-?\d+(?:\.\d+)?/);
+        if (match) {
+          const num = Number(match[0]);
+          if (Number.isFinite(num)) return num;
+        }
+      }
+      return null;
+    }
+
+    function estimateTmbFromProfile() {
+      const peso = typeof user.peso_kg === 'number' ? user.peso_kg : null;
+      const altura = typeof user.altura_cm === 'number' ? user.altura_cm : null;
+      const edad = age ?? null;
+      if (peso && altura && edad != null && user.sexo) {
+        const male = (user.sexo || '').toLowerCase().startsWith('m');
+        return male
+          ? 10 * peso + 6.25 * altura - 5 * edad + 5
+          : 10 * peso + 6.25 * altura - 5 * edad - 161;
+      }
+      return null;
+    }
+
+    function estimateTdee(summaryCandidate) {
+      if (summaryCandidate && typeof summaryCandidate === 'object') {
+        const direct = toNumberOrNull(summaryCandidate.tdee ?? summaryCandidate.TDEE);
+        if (direct && direct > 800) return direct;
+        const kcal = toNumberOrNull(summaryCandidate.kcal_objetivo);
+        const delta = toNumberOrNull(summaryCandidate.deficit_superavit_kcal);
+        if (kcal != null && delta != null) {
+          const derived = kcal - delta;
+          if (derived > 800) return derived;
+        }
+      }
+      const tmb = estimateTmbFromProfile();
+      if (!tmb) return null;
+      const actividad = (user.nivel_actividad || '').toLowerCase();
+      let factor = 1.25;
+      if (/muy\s*alto|extrem/.test(actividad)) factor = 1.9;
+      else if (/alto|intens/.test(actividad)) factor = 1.6;
+      else if (/moder/.test(actividad)) factor = 1.5;
+      else if (/lig/.test(actividad)) factor = 1.35;
+      return Math.max(900, Math.round(tmb * factor));
+    }
+
+    function classifyGoalType() {
+      const raw = (user.objetivo || '').toLowerCase();
+      if (/bajar|grasa|defin|perder/.test(raw)) return 'loss';
+      if (/ganar|muscul|subir|hiper/.test(raw)) return 'gain';
+      return 'maint';
+    }
+
+    function classifySpeedType() {
+      const raw = (user.velocidad_cambio || '').toLowerCase();
+      if (/rap|alto|agres|intens/.test(raw)) return 'fast';
+      if (/lent|suav/.test(raw)) return 'slow';
+      return 'moderate';
+    }
+
+    function getDeltaBounds(goalType, speedType) {
+      const presets = {
+        loss: { slow: -350, moderate: -500, fast: -700 },
+        gain: { slow: 250, moderate: 350, fast: 500 },
+        maint: { slow: 0, moderate: 0, fast: 0 },
+      };
+      const target = presets[goalType]?.[speedType] ?? presets[goalType]?.moderate ?? 0;
+      const min = goalType === 'loss' ? -900 : goalType === 'gain' ? 150 : -120;
+      const max = goalType === 'loss' ? -250 : goalType === 'gain' ? 700 : 150;
+      return { target, min, max };
+    }
+
+    function sanitizeSummaryTargets(summaryCandidate) {
+      if (!summaryCandidate || typeof summaryCandidate !== 'object') return;
+      const tdeeEst = estimateTdee(summaryCandidate);
+      if (!tdeeEst || !Number.isFinite(tdeeEst)) return;
+      const goalType = classifyGoalType();
+      const speedType = classifySpeedType();
+      const { target, min, max } = getDeltaBounds(goalType, speedType);
+      let kcal = toNumberOrNull(summaryCandidate.kcal_objetivo);
+      const expected = Math.round(tdeeEst + target);
+      if (kcal == null) kcal = expected;
+      const minCalories = Math.max(1100, Math.round(tdeeEst + min));
+      const maxCalories = Math.max(minCalories, Math.round(tdeeEst + max));
+      let adjusted = Math.min(Math.max(kcal, minCalories), maxCalories);
+      if (goalType === 'loss') {
+        adjusted = Math.min(adjusted, Math.round(tdeeEst - 100));
+      } else if (goalType === 'gain') {
+        adjusted = Math.max(adjusted, Math.round(tdeeEst + 100));
+      }
+      summaryCandidate.kcal_objetivo = adjusted;
+      const delta = Math.round(adjusted - tdeeEst);
+      summaryCandidate.deficit_superavit_kcal = delta;
+      if (summaryCandidate.tdee == null || summaryCandidate.tdee <= 0) {
+        summaryCandidate.tdee = Math.round(tdeeEst);
+      }
+      if (summaryCandidate.tmb == null || summaryCandidate.tmb <= 0) {
+        const tmb = estimateTmbFromProfile();
+        if (tmb) summaryCandidate.tmb = Math.round(tmb);
+      }
+      const ritmo = delta !== 0 ? Number(((delta * 7) / 7700).toFixed(2)) : 0;
+      summaryCandidate.ritmo_peso_kg_sem = ritmo;
+
+      if (summaryCandidate.proteinas_g == null) {
+        if (preferredProteinDaily) {
+          summaryCandidate.proteinas_g = preferredProteinDaily;
+        } else if (typeof user.peso_kg === 'number') {
+          const multiplier = goalType === 'gain' ? 1.9 : goalType === 'loss' ? 1.7 : 1.6;
+          summaryCandidate.proteinas_g = Math.round(user.peso_kg * multiplier);
+        }
+      }
+      const fats = toNumberOrNull(summaryCandidate.grasas_g);
+      if (fats == null || fats <= 0) {
+        summaryCandidate.grasas_g = Math.max(0, Math.round((adjusted * 0.25) / 9));
+      }
+      const carbs = toNumberOrNull(summaryCandidate.carbohidratos_g);
+      if (carbs == null || carbs < 0) {
+        const prot = toNumberOrNull(summaryCandidate.proteinas_g) || 0;
+        const fatsNow = toNumberOrNull(summaryCandidate.grasas_g) || 0;
+        const remaining = adjusted - prot * 4 - fatsNow * 9;
+        summaryCandidate.carbohidratos_g = Math.max(0, Math.round(remaining / 4));
+      }
     }
 
     // PREFETCH: lanzar generación en background y devolver rápido 202
@@ -918,6 +1058,8 @@ ${wantTypesText}`;
       const localSummary = buildLocalSummary();
       if (localSummary) summary = localSummary;
     }
+
+    sanitizeSummaryTargets(summary);
 
     // Helper: normaliza un string al tipo estándar o null
     function normalizeTipoComida(raw) {

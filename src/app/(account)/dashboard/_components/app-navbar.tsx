@@ -8,7 +8,7 @@ import {
   NavigationMenuItem,
   NavigationMenuLink,
 } from "@/components/ui/navigation-menu";
-import { CheckCircle2, CircleDashed, Gauge, Home, UtensilsCrossed, LogOut, User, Menu, Activity, Settings } from "lucide-react";
+import { CheckCircle2, CircleDashed, Home, UtensilsCrossed, LogOut, User, Menu, Activity, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -79,7 +79,6 @@ export default function AppNavbar() {
       <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4 relative w-full">
         {/* Brand */}
         <Link href="/dashboard" className="flex items-center gap-2 font-semibold text-lg shrink-0">
-          <Gauge className="h-5 w-5" />
           <span>FitBalance</span>
         </Link>
 
