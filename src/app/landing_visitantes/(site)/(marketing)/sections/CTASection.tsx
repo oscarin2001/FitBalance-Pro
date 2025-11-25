@@ -7,8 +7,8 @@ export function CTASection() {
         <p className="text-sm font-semibold uppercase tracking-[0.4em] text-slate-500">Listo para probar</p>
         <h2 className="mt-4 font-serif text-3xl font-semibold">Instala FitBalance como app o ingresa al panel web</h2>
         <p className="mt-3 text-slate-600">
-          Disponible como PWA para Android y escritorio. Desde el navegador verás el botón “Instalar FitBalance” en la
-          barra de direcciones o puedes abrir la app en pantalla completa desde aquí.
+          Abre FitBalance en tu navegador y verás la opción “Instalar FitBalance”. También puedes entrar directo al
+          panel web y guardar el acceso como si fuera una app más en tu teléfono.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-4 md:flex-row">
           <Link

@@ -41,9 +41,9 @@ export function Hero() {
               Inicia como una persona normal y deja que la IA te asesore con planes accesibles.
             </h1>
             <p className="text-base text-slate-600 md:text-lg">
-              FitBalance es una PWA pensada para quienes no pueden pagar consultas privadas. Respondes en lenguaje
-              cotidiano y el copiloto combina IA con lineamientos clínicos para proponerte alimentación, hidratación y
-              recordatorios accionables.
+              FitBalance es una app web ligera pensada para quienes no pueden pagar consultas privadas. Respondes en
+              lenguaje cotidiano y nuestro acompañamiento digital toma esas respuestas para sugerirte comidas,
+              hidratación y recordatorios fáciles de seguir.
             </p>
           </div>
           <div className="flex flex-col items-center justify-center gap-4 md:flex-row">

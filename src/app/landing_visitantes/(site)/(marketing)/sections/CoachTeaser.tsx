@@ -8,14 +8,13 @@ export function CoachTeaser() {
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Próximamente</p>
           <h2 className="mt-4 font-serif text-3xl font-semibold">Panel para nutricionistas y clínicas</h2>
           <p className="mt-4 text-slate-600">
-            Estamos habilitando herramientas para que los profesionales creen pacientes, diseñen dietas manuales, asignen
-            alertas y documenten consultas directamente en FitBalance. El objetivo: que los planes generados por IA
-            puedan complementarse con la experiencia clínica sin fricción.
+            Estamos armando funciones para que los profesionales sumen pacientes, escriban menús propios, dejen notas y
+            compartan recordatorios sin perder tiempo entre hojas, correos o WhatsApp.
           </p>
           <ul className="mt-6 space-y-4 text-slate-600">
-            <li>• Gestión de pacientes y firmas digitales.</li>
-            <li>• Plantillas editables de menús, suplementos y seguimiento.</li>
-            <li>• Exportación PDF con branding de cada centro.</li>
+            <li>• Registro simple de pacientes y firma de materiales.</li>
+            <li>• Menús y checklists que cada centro puede personalizar.</li>
+            <li>• Informes con el logo del consultorio listos para enviar.</li>
           </ul>
           <Link
             href="mailto:hola@fitbalance.app"
@@ -29,15 +28,15 @@ export function CoachTeaser() {
           <div className="mt-6 space-y-5 text-slate-700">
             <div>
               <p className="text-xs font-semibold text-slate-400">Q1</p>
-              <p className="text-base">Portal para subir planes manuales con librería de alimentos.</p>
+              <p className="text-base">Subir menús manuales con ingredientes sugeridos y fotos.</p>
             </div>
             <div>
               <p className="text-xs font-semibold text-slate-400">Q2</p>
-              <p className="text-base">Chat colaborativo paciente-equipo y tareas automáticas.</p>
+              <p className="text-base">Chat compartido paciente-equipo y tareas automáticas.</p>
             </div>
             <div>
               <p className="text-xs font-semibold text-slate-400">Q3</p>
-              <p className="text-base">Integraciones con balanzas inteligentes y wearables.</p>
+              <p className="text-base">Conectar balanzas o wearables sin configuraciones complicadas.</p>
             </div>
           </div>
         </div>

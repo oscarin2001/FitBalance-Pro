@@ -1,15 +1,15 @@
 const features = [
   {
-    title: "Planes inteligentes",
-    description: "Algoritmos propios combinan ETA, velocidad de cambio y preferencias reales para ajustar calorías y macros sin cálculos manuales.",
+    title: "Planes hechos a mano",
+    description: "Tomamos tus objetivos y gustos para devolverte un menú ya balanceado, sin fórmulas raras ni hojas de cálculo.",
   },
   {
-    title: "Seguimiento integral",
-    description: "Peso, perímetros, hidratación, hábito de bebidas y adherencia se unifican en dashboards y reportes PDF listos para compartir.",
+    title: "Todo en un mismo lugar",
+    description: "Peso, medidas, agua, bebidas y hábitos se registran con dos toques y se muestran en informes fáciles de leer.",
   },
   {
-    title: "Operación clínica",
-    description: "Roles para pacientes y equipo, alertas de cumplimiento y próximos lanzamientos para nutricionistas que desean digitalizar sus consultas.",
+    title: "Listo para equipos de salud",
+    description: "Pacientes y profesionales comparten notas, alertas y materiales con el logo de la clínica, sin correos eternos.",
   },
 ];
 
@@ -21,7 +21,7 @@ export function Highlights() {
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">Valor inmediato</p>
           <h2 className="mt-4 font-serif text-3xl font-semibold">Una sola plataforma para evaluar, planificar y acompañar</h2>
           <p className="mt-3 text-slate-600">
-            FitBalance reemplaza múltiples hojas y apps desconectadas por un flujo científico respaldado por IA.
+            FitBalance reemplaza hojas sueltas y mensajes dispersos con una guía clara que puedes seguir día a día.
           </p>
         </div>
         <div className="mt-12 grid gap-6 md:grid-cols-3">

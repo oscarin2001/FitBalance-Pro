@@ -1732,9 +1732,6 @@ export default function OnboardingAdvicePage() {
         console.warn("Error aplicando objetivos del plan", e);
       }
 
-      // 4) Descargar PDF automáticamente antes de finalizar
-      try { await downloadPdf(); } catch {}
-
       const done = await fetch("/api/auth/onboarding/complete", { method: "POST", cache: "no-store", credentials: "include" });
       if (done.status === 401) {
         toast.error("Sesión expirada. Inicia sesión nuevamente.");
@@ -1848,11 +1845,7 @@ export default function OnboardingAdvicePage() {
           }
           if (pdfDebug) {
             // Log de diagnóstico: valores que van al PDF
-            console.log('[PDF] summary raw:', summary);
-            console.log('[PDF] normSummary:', normSummary);
-            console.log('[PDF] parsed.summary:', parsed?.summary);
-            console.log('[PDF] merged summary (s):', s);
-            console.log('[PDF] hydrationLiters:', hydrationLiters);
+            // Conserva este bloque comentado para depurar manualmente el PDF si fuera necesario.
           }
         } catch {}
         // Normalizar snapshot final para usar nombres estándar en el PDF
