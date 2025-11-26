@@ -169,12 +169,6 @@ export default function LoginPage() {
           <FcGoogle className="h-5 w-5" /> Google
         </Button>
 
-        <div className="mt-2 text-center text-sm">
-          ¿No tienes cuenta?{" "}
-          <a href="/auth/register" className="underline underline-offset-4">
-            Regístrate
-          </a>
-        </div>
       </form>
     </div>
   );
