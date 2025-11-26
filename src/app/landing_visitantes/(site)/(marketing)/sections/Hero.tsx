@@ -104,9 +104,10 @@ export function Hero() {
   return (
     <header className="bg-gradient-to-br from-white via-emerald-50 to-indigo-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-6 py-8">
-        <nav className="flex items-center justify-between rounded-full border border-slate-200 bg-white/80 px-6 py-4 shadow-sm">
+        <nav className="flex items-center justify-between rounded-full border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
           <div className="text-lg font-semibold tracking-tight">FitBalance</div>
-          <ul className="flex gap-6 text-sm font-medium">
+          {/* Hide nav links on small screens to avoid overflow */}
+          <ul className="hidden md:flex gap-6 text-sm font-medium">
             {navLinks.map((item) => (
               <li key={item.href}>
                 <a
@@ -158,14 +159,14 @@ export function Hero() {
             <div
               role="status"
               aria-live="polite"
-              className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-5 py-3 text-white shadow-xl flex items-center gap-3"
-              style={{ background: accent.purple }}
+              className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-5 py-3 text-white shadow-xl flex items-center gap-3 animate-pulse"
+              style={{ background: accent.primary }}
             >
-              <div className="text-sm font-medium">{installNotice}</div>
+              <div className="text-sm font-semibold">App instalada</div>
               <button
                 aria-label="Cerrar aviso"
                 onClick={() => setInstallNotice(null)}
-                className="text-white/80 text-sm rounded px-2 py-1"
+                className="text-white/90 text-sm rounded px-2 py-1"
               >
                 ✕
               </button>
