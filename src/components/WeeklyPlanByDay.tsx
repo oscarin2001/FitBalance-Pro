@@ -130,6 +130,14 @@ export default function WeeklyPlanByDay({ weekly, className, schedule, beverages
                               ))}
                             </ul>
                           )}
+                            {/* Si no hay itemsText pero hay ingredientes renderizarlos */}
+                            {(!Array.isArray(m.itemsText) || m.itemsText.length === 0) && Array.isArray((m as any).ingredientes) && (m as any).ingredientes.length > 0 && (
+                              <ul className="mt-1 list-disc pl-5 space-y-0.5 text-muted-foreground break-words">
+                                {(m as any).ingredientes.map((ing: any, j: number) => (
+                                  <li key={j}>{ing.nombre}{ing.gramos ? ` (${ing.gramos} g)` : ''}</li>
+                                ))}
+                              </ul>
+                            )}
                           {bevList.length > 0 && (
                             <ul className="mt-1 list-disc pl-5 space-y-0.5 text-muted-foreground">
                               {bevList.map((b, bi) => (
