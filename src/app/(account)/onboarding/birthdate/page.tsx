@@ -30,7 +30,9 @@ export default function OnboardingBirthdatePage() {
       toast.error("La fecha no puede ser futura");
       return;
     }
-    const age = Math.floor((now.getTime() - date.getTime()) / (365.25 * 24 * 3600 * 1000));
+    const age = Math.floor(
+      (now.getTime() - date.getTime()) / (365.25 * 24 * 3600 * 1000)
+    );
     if (age < 16) {
       toast.error("Debes tener al menos 16 años");
       return;
@@ -39,7 +41,10 @@ export default function OnboardingBirthdatePage() {
       const res = await fetch("/api/account/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fecha_nacimiento: date.toISOString(), onboarding_step: "birthdate" }),
+        body: JSON.stringify({
+          fecha_nacimiento: date.toISOString(),
+          onboarding_step: "birthdate",
+        }),
       });
       if (!res.ok) throw new Error();
       router.push("/onboarding/activity");
@@ -50,26 +55,25 @@ export default function OnboardingBirthdatePage() {
 
   return (
     <OnboardingLayout>
-        <OnboardingHeader title="Fecha de nacimiento" subtitle="Tu edad nos ayuda a personalizar tu plan y recomendaciones. Selecciona tu fecha de nacimiento." />
-        <OnboardingCard>
-          <div className="flex flex-col gap-4 w-full">
+      <OnboardingHeader
+        title="Fecha de nacimiento"
+        subtitle="Tu edad nos ayuda a personalizar tu plan y recomendaciones. Selecciona tu fecha de nacimiento."
+      />
+      <OnboardingCard>
+        <div className="w-full flex justify-center">
+          <div className="w-full max-w-md">
             <BirthdateWheelPicker
               value={date}
               onChange={(next) => setDate(next)}
               minYear={MIN_YEAR}
             />
           </div>
-          {date && (
-            <div className="text-center text-lg font-medium mt-4">
-              Fecha seleccionada: {date.toLocaleDateString("es-ES", {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </div>
-          )}
-        </OnboardingCard>
-        <OnboardingActions back={{ onClick: () => router.push("/onboarding/metrics") }} next={{ onClick: onNext }} />
+        </div>
+      </OnboardingCard>
+      <OnboardingActions
+        back={{ onClick: () => router.push("/onboarding/metrics") }}
+        next={{ onClick: onNext }}
+      />
     </OnboardingLayout>
   );
 }

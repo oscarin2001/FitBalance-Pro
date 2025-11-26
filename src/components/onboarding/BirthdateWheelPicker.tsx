@@ -69,16 +69,7 @@ function WheelColumn<T extends WheelValue>({
       <span className="block text-center text-[11px] uppercase tracking-wide text-muted-foreground mb-1 select-none">
         {ariaLabel}
       </span>
-      <button
-        type="button"
-        aria-label={`Subir ${ariaLabel}`}
-        className="absolute left-1/2 top-5 z-10 -translate-x-1/2 rounded-full bg-background/90 shadow p-1 border text-muted-foreground hover:text-primary"
-        onClick={() => selectRelative(-1)}
-        disabled={index <= 0}
-      >
-        <ChevronUp className="size-4" />
-      </button>
-      <div className="pointer-events-none absolute inset-x-2 top-1/2 -translate-y-1/2 rounded-md border border-primary/40 bg-primary/5 h-10" />
+      {/* Arrows and gray center overlay removed per design - active item indicates selection */}
       <div
         className="h-48 overflow-y-auto snap-y snap-mandatory scroll-smooth px-2 pb-4 pt-6"
         aria-label={ariaLabel}
@@ -111,15 +102,7 @@ function WheelColumn<T extends WheelValue>({
           );
         })}
       </div>
-      <button
-        type="button"
-        aria-label={`Bajar ${ariaLabel}`}
-        className="absolute left-1/2 bottom-3 z-10 -translate-x-1/2 rounded-full bg-background/90 shadow p-1 border text-muted-foreground hover:text-primary"
-        onClick={() => selectRelative(1)}
-        disabled={index >= values.length - 1}
-      >
-        <ChevronDown className="size-4" />
-      </button>
+      {/* Down arrow removed */}
     </div>
   );
 }
@@ -200,8 +183,7 @@ export function BirthdateWheelPicker({
           </DialogDescription>
         </DialogHeader>
         <p className="text-xs text-muted-foreground mb-3">
-          Toca cualquier valor, usa las flechas flotantes o desliza las columnas
-          para ajustar día, mes y año.
+          Toca o desliza las columnas para ajustar día, mes y año.
         </p>
         <div className="flex gap-3 mt-2">
           <WheelColumn
