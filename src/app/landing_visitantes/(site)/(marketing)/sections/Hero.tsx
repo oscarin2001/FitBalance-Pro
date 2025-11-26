@@ -70,7 +70,9 @@ export function Hero() {
 
   const handlePrimaryCta = useCallback(async () => {
     if (isStandalone) {
-      window.location.href = "/auth/login";
+      // Don't redirect when installed. Show instruction to user instead.
+      setInstallNotice("Redirígete a tu pantalla principal para ver la app");
+      setTimeout(() => setInstallNotice(null), 6000);
       return;
     }
 
@@ -94,7 +96,7 @@ export function Hero() {
   }, [installPrompt, isStandalone]);
 
   const primaryCtaLabel = useMemo(() => {
-    if (isStandalone) return "Abrir FitBalance";
+    if (isStandalone) return "Redirígete a tu pantalla principal para ver la app";
     if (installing) return "Abriendo instalación…";
     return "Instalar — Android/iOS";
   }, [isStandalone, installing]);
@@ -104,21 +106,31 @@ export function Hero() {
   return (
     <header className="bg-gradient-to-br from-white via-emerald-50 to-indigo-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-6 py-8">
-        <nav className="flex items-center justify-between rounded-full border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
-          <div className="text-lg font-semibold tracking-tight">FitBalance</div>
-          {/* Hide nav links on small screens to avoid overflow */}
-          <ul className="hidden md:flex gap-6 text-sm font-medium">
-            {navLinks.map((item) => (
-              <li key={item.href}>
-                <a
-                  href={item.href}
-                  className="text-slate-500 transition hover:text-slate-900"
-                >
-                  {item.label}
-                </a>
-              </li>
-            ))}
-          </ul>
+        <nav className="rounded-full border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
+          <div className="mx-auto max-w-6xl px-0">
+            <div className="grid grid-cols-3 items-center">
+              <div className="flex items-center justify-start">
+                {/* left slot (kept empty on purpose for balance) */}
+              </div>
+              <div className="flex items-center justify-center">
+                <div className="text-lg font-semibold tracking-tight">FitBalance</div>
+              </div>
+              <div className="hidden md:flex items-center justify-end">
+                <ul className="flex gap-6 text-sm font-medium">
+                  {navLinks.map((item) => (
+                    <li key={item.href}>
+                      <a
+                        href={item.href}
+                        className="text-slate-500 transition hover:text-slate-900"
+                      >
+                        {item.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
         </nav>
         <div className="grid gap-10 pb-16 pt-20 text-center md:pb-24">
           <div className="mx-auto inline-flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-1 text-xs uppercase tracking-[0.4em] text-slate-500">
