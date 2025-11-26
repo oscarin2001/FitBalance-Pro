@@ -1768,7 +1768,18 @@ ${wantTypesText}`;
     try {
       const sObj = extractJsonBlock("JSON_SUMMARY", content);
       if (sObj && typeof sObj === "object") summary = sObj;
-      const mObj = extractJsonBlock("JSON_MEALS", content);
+      let mObj = extractJsonBlock("JSON_MEALS", content);
+      // Si el bloque extraído es un objeto wrapper que contiene una clave "JSON_MEALS"
+      // (p. ej. el modelo devolvió un único objeto con JSON_SUMMARY y JSON_MEALS dentro),
+      // entonces desanidar para obtener el verdadero objeto de comidas.
+      try {
+        if (mObj && typeof mObj === 'object') {
+          const key = Object.keys(mObj).find(k => String(k).toLowerCase() === 'json_meals');
+          if (key && mObj[key] && typeof mObj[key] === 'object') {
+            mObj = mObj[key];
+          }
+        }
+      } catch {}
       if (Array.isArray(mObj)) {
         meals = { items: mObj };
       } else if (mObj && typeof mObj === "object") {
