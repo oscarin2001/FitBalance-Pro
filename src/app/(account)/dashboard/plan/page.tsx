@@ -298,24 +298,64 @@ export default function PlanPage() {
               try {
                 const flatItems = Array.isArray(planAi?.meals?.items) ? planAi.meals.items : null;
                 if (Array.isArray(flatItems) && flatItems.length) {
-                  const byDay: Record<string, any[]> = {};
-                  for (const it of flatItems) {
-                    const dia = it?.dia || it?.day || null;
-                    if (!dia) continue;
-                    if (!byDay[dia]) byDay[dia] = [];
-                    byDay[dia].push(it);
+                  // Si los items incluyen 'dia' agrupar por día
+                  const hasDay = flatItems.some(it => it && (it.dia || it.day));
+                  if (hasDay) {
+                    const byDay: Record<string, any[]> = {};
+                    for (const it of flatItems) {
+                      const dia = it?.dia || it?.day || null;
+                      if (!dia) continue;
+                      if (!byDay[dia]) byDay[dia] = [];
+                      byDay[dia].push(it);
+                    }
+                    const constructed: WeeklyDay[] = Object.keys(byDay).map((dia) => ({
+                      day: String(dia),
+                      active: true,
+                      meals: byDay[dia].map((it) => ({
+                        tipo: it.tipo || it.type || 'Comida',
+                        receta: { nombre: it.nombre || it.title || '' },
+                        itemsText: Array.isArray(it.itemsText) ? it.itemsText : (Array.isArray(it.items) ? it.items.map((it2:any)=> (typeof it2 === 'string' ? it2 : (it2?.nombre || it2?.name || JSON.stringify(it2)))) : []),
+                        ingredientes: Array.isArray(it.ingredientes) ? it.ingredientes : undefined,
+                      }))
+                    }));
+                    if (constructed.length) setPlanAIWeekly(constructed);
+                  } else {
+                    // Si no hay día en items, construir weekly replicando por tipo para Lunes..Domingo
+                    const byTipo: Record<string, any> = {};
+                    for (const it of flatItems) {
+                      const rawTipo = it && (it.tipo || it.type || it.meal || it.nombre);
+                      const tipo = rawTipo || 'Snack';
+                      if (!byTipo[tipo]) byTipo[tipo] = it;
+                    }
+                    const tipos = Object.keys(byTipo);
+                    if (tipos.length) {
+                      const order = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+                      const constructed = order.map(day => ({
+                        day,
+                        active: true,
+                        meals: tipos.map(t => {
+                          const src = byTipo[t];
+                          const nombre = (src && (src.nombre || src.name || src.title)) || '';
+                          const itemsText = Array.isArray(src?.itemsText)
+                            ? src.itemsText
+                            : (Array.isArray(src?.items)
+                                ? src.items.map((it2:any) => (typeof it2 === 'string' ? it2 : (it2?.nombre || it2?.name || JSON.stringify(it2))))
+                                : (Array.isArray(src?.ingredientes)
+                                    ? src.ingredientes.map((ing:any) => (ing?.nombre ? `${ing.nombre}${ing.gramos ? ` (${ing.gramos} g)` : ''}` : JSON.stringify(ing)))
+                                    : []));
+                          const mealObj: any = {
+                            tipo: t,
+                            receta: { nombre: nombre || `Comida` },
+                          };
+                          if (itemsText && itemsText.length) mealObj.itemsText = itemsText;
+                          if (Array.isArray(src?.ingredientes) && src.ingredientes.length) mealObj.ingredientes = src.ingredientes;
+                          if (src?.targetProteinG != null) mealObj.targetProteinG = src.targetProteinG;
+                          return mealObj;
+                        })
+                      }));
+                      if (constructed.length) setPlanAIWeekly(constructed as WeeklyDay[]);
+                    }
                   }
-                  const constructed: WeeklyDay[] = Object.keys(byDay).map((dia) => ({
-                    day: String(dia),
-                    active: true,
-                    meals: byDay[dia].map((it) => ({
-                      tipo: it.tipo || it.type || 'Comida',
-                      receta: { nombre: it.nombre || it.title || '' },
-                      itemsText: Array.isArray(it.itemsText) ? it.itemsText : (Array.isArray(it.items) ? it.items.map((it2:any)=> (typeof it2 === 'string' ? it2 : (it2?.nombre || it2?.name || JSON.stringify(it2)))) : []),
-                      ingredientes: Array.isArray(it.ingredientes) ? it.ingredientes : undefined,
-                    }))
-                  }));
-                  if (constructed.length) setPlanAIWeekly(constructed);
                 }
               } catch {}
             }
