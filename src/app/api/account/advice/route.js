@@ -1768,63 +1768,7 @@ ${wantTypesText}`;
     try {
       const sObj = extractJsonBlock("JSON_SUMMARY", content);
       if (sObj && typeof sObj === "object") summary = sObj;
-      let mObj = extractJsonBlock("JSON_MEALS", content);
-      // Si el modelo devolvió un wrapper con JSON_MEALS dentro, desanidar
-      try {
-        if (mObj && typeof mObj === 'object') {
-          const key = Object.keys(mObj).find(k => String(k).toLowerCase() === 'json_meals');
-          if (key && mObj[key] && typeof mObj[key] === 'object') {
-            mObj = mObj[key];
-          }
-        }
-      } catch {}
-      // Detección: algunos modelos devuelven JSON_MEALS agrupado por tipo de comida
-      // p.ej. { "Desayuno": { "Día 1": "...", "Día 2": "..." }, "Almuerzo": { ... } }
-      // Convertir esa forma a un objeto semanal { "Lunes": [ {...}, ... ], ... }
-      try {
-        if (mObj && typeof mObj === 'object' && !Array.isArray(mObj)) {
-          const mealTypeKeys = Object.keys(mObj || {});
-          const knownTypes = mealTypeKeys.filter(k => /desayuno|almuerzo|cena|snack/i.test(k));
-          if (knownTypes.length && mealTypeKeys.length === knownTypes.length) {
-            const dayOrder = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
-            const dayMap = {}; // dayName -> array of meal raw entries
-            for (const typeKey of mealTypeKeys) {
-              const dayObj = mObj[typeKey];
-              if (!dayObj || typeof dayObj !== 'object') continue;
-              for (const [rawDayKey, rawVal] of Object.entries(dayObj)) {
-                let dayName = normalizeDayKey(rawDayKey);
-                if (!dayName) {
-                  const m = String(rawDayKey).match(/día\s*(\d+)/i);
-                  if (m && m[1]) {
-                    const idx = Number(m[1]) - 1;
-                    dayName = dayOrder[idx] || null;
-                  }
-                }
-                if (!dayName) continue;
-                if (!dayMap[dayName]) dayMap[dayName] = [];
-                // construir entrada compatible con convertWeeklyPlanObject expectations
-                dayMap[dayName].push({ tipo: typeKey, ...(typeof rawVal === 'string' ? { descripcion: rawVal } : rawVal) });
-              }
-            }
-            // Reemplazar mObj por objeto con claves por día
-            const constructed = {};
-            for (const dn of Object.keys(dayMap)) constructed[dn] = dayMap[dn];
-            // Sólo sustituir si construimos al menos un día
-            if (Object.keys(constructed).length) mObj = constructed;
-          }
-        }
-      } catch {}
-      // Si el bloque extraído es un objeto wrapper que contiene una clave "JSON_MEALS"
-      // (p. ej. el modelo devolvió un único objeto con JSON_SUMMARY y JSON_MEALS dentro),
-      // entonces desanidar para obtener el verdadero objeto de comidas.
-      try {
-        if (mObj && typeof mObj === 'object') {
-          const key = Object.keys(mObj).find(k => String(k).toLowerCase() === 'json_meals');
-          if (key && mObj[key] && typeof mObj[key] === 'object') {
-            mObj = mObj[key];
-          }
-        }
-      } catch {}
+      const mObj = extractJsonBlock("JSON_MEALS", content);
       if (Array.isArray(mObj)) {
         meals = { items: mObj };
       } else if (mObj && typeof mObj === "object") {
@@ -2188,75 +2132,6 @@ ${wantTypesText}`;
         return { ...day, meals };
       });
     }
-
-    // Si IA devolvió solo `meals.items` (lista aplanada) pero no hay `weekly`,
-    // construir un `weekly` repetido con los tipos detectados para toda la semana.
-    try {
-      if (!weeklyPlanFromJson && meals && Array.isArray(meals.items) && meals.items.length) {
-        const items = meals.items;
-        // Detectar si los items ya contienen un campo 'dia'/'day'
-        const hasDay = items.some((it) => it && (it.dia || it.day));
-        if (!hasDay) {
-          // Agrupar por tipo (usar la primera instancia por tipo)
-          const byTipo = {};
-          for (const it of items) {
-            try {
-              const rawTipo = it && (it.tipo || it.type || it.meal || it.nombre);
-              const t = normalizeTipoComida(rawTipo) || "Snack";
-              if (!byTipo[t]) byTipo[t] = it;
-            } catch {}
-          }
-          const tipos = Object.keys(byTipo);
-          if (tipos.length) {
-            const order = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-            const constructed = order.map((day) => ({
-              day,
-              active: true,
-              meals: tipos.map((t) => {
-                const src = byTipo[t];
-                const nombre = (src && (src.nombre || src.name || src.title)) || src?.nombre || '';
-                const itemsText = Array.isArray(src?.itemsText)
-                  ? src.itemsText
-                  : (Array.isArray(src?.items)
-                      ? src.items.map((it2) => (typeof it2 === 'string' ? it2 : (it2?.nombre || it2?.name || JSON.stringify(it2))))
-                      : (Array.isArray(src?.ingredientes)
-                          ? src.ingredientes.map((ing) => (ing?.nombre ? `${ing.nombre}${ing.gramos ? ` (${ing.gramos} g)` : ''}` : JSON.stringify(ing)))
-                          : []));
-                const mealObj = {
-                  tipo: t,
-                  receta: { nombre: nombre || `Comida` },
-                  itemsText: itemsText && itemsText.length ? itemsText : undefined,
-                };
-                if (Array.isArray(src?.ingredientes) && src.ingredientes.length) mealObj.ingredientes = src.ingredientes;
-                if (src?.targetProteinG != null) mealObj.targetProteinG = src.targetProteinG;
-                return mealObj;
-              }),
-            }));
-            weeklyPlanFromJson = constructed;
-          }
-        } else {
-          // Si los items contienen 'dia', agrupar bajo esos días normalizando claves
-          const byDay = {};
-          for (const it of items) {
-            try {
-              const rawDay = it?.dia || it?.day;
-              const dayKey = normalizeDayKey(rawDay) || String(rawDay);
-              if (!byDay[dayKey]) byDay[dayKey] = [];
-              const tipo = normalizeTipoComida(it?.tipo) || 'Snack';
-              byDay[dayKey].push({
-                tipo,
-                receta: { nombre: it?.nombre || it?.name || it?.title || '' },
-                itemsText: Array.isArray(it?.itemsText) ? it.itemsText : undefined,
-                ingredientes: Array.isArray(it?.ingredientes) ? it.ingredientes : undefined,
-                targetProteinG: it?.targetProteinG != null ? it.targetProteinG : undefined,
-              });
-            } catch {}
-          }
-          const constructed = Object.keys(byDay).map((d) => ({ day: d, active: true, meals: byDay[d] }));
-          if (constructed.length) weeklyPlanFromJson = constructed;
-        }
-      }
-    } catch {}
 
     // Helper: generar items básicos por tipo a partir de alimentos guardados
     async function generateBasicItemsByTypes(userId, types) {
