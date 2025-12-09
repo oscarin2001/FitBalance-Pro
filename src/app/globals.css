@@ -51,8 +51,8 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: #0f1724; /* neutral slate */
+  --primary-foreground: #ffffff;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -85,8 +85,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: #0f1724; /* neutral slate (dark theme) */
+  --primary-foreground: #ffffff;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -119,4 +119,26 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Force neutral/white buttons inside dropdown menus (user requested white) */
+[data-slot="dropdown-menu-content"] [data-slot="button"] {
+  background-color: #ffffff !important; /* white */
+  color: #0f1724 !important; /* slate-900 text */
+  border-color: rgba(15, 23, 36, 0.08) !important;
+}
+[data-slot="dropdown-menu-content"] [data-slot="button"]:hover {
+  background-color: #f8fafc !important; /* slate-50-ish hover */
+}
+
+/* Broader fallback: any button or anchor inside dropdown content */
+[data-slot="dropdown-menu-content"] button,
+[data-slot="dropdown-menu-content"] a {
+  background-color: #ffffff !important;
+  color: #0f1724 !important;
+  border-color: rgba(15, 23, 36, 0.08) !important;
+}
+[data-slot="dropdown-menu-content"] button:hover,
+[data-slot="dropdown-menu-content"] a:hover {
+  background-color: #f8fafc !important;
 }

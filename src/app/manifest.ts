@@ -23,7 +23,7 @@ export default function manifest(): MetadataRoute.Manifest {
   dir: "auto",
   lang: "es-ES",
   start_url: "https://fit-balance-eight.vercel.app/dashboard",
-  name: "Fit Balance",
+  name: "FitBalance",
   short_name: "FitBalance"
   };
 }

@@ -957,14 +957,23 @@ export default function OnboardingAdvicePage() {
       s = s.replace(/\([^)]*\)/g, "");
       s = s.replace(/\[[^\]]*\]/g, "");
       // Quitar patrones de cantidad (80g, 250 ml, 15 g, 150g, 1 taza, 2 unidades, etc.)
-      s = s.replace(/\b\d+[\.,]?\d*\s*(g|gr|grs|gramo(?:s)?|kg|mg|ml|l|taza(?:s)?|cucharad(?:a|as)|unidad(?:es)?|unidades|u)\b/gi, "");
+      s = s.replace(
+        /\b\d+[\.,]?\d*\s*(g|gr|grs|gramo(?:s)?|kg|mg|ml|l|taza(?:s)?|cucharad(?:a|as)|unidad(?:es)?|unidades|u)\b/gi,
+        ""
+      );
       s = s.replace(/\b\d+[\.,]?\d*(ml|g|l)\b/gi, "");
       // Quitar indicadores tipo '- 27 g proteína' al final
-      s = s.replace(/[-–—]\s*\d+[\.,]?\d*\s*(g|gr|grs|gramo(?:s)?|ml|l).*/i, "");
+      s = s.replace(
+        /[-–—]\s*\d+[\.,]?\d*\s*(g|gr|grs|gramo(?:s)?|ml|l).*/i,
+        ""
+      );
       // Quitar números sueltos que no aporten al título (pero no eliminar letras)
       s = s.replace(/\b\d+\b/g, "");
       // Normalizar comas y espacios
-      s = s.replace(/\s{2,}/g, " ").replace(/\s*,\s*/g, ", ").trim();
+      s = s
+        .replace(/\s{2,}/g, " ")
+        .replace(/\s*,\s*/g, ", ")
+        .trim();
       // Eliminar comas iniciales o finales
       s = s.replace(/^,\s*/g, "").replace(/\s*,\s*$/g, "");
       return s;
@@ -1083,7 +1092,8 @@ export default function OnboardingAdvicePage() {
                     : "Snack_tarde";
               else tipo = "Snack";
             }
-            const rawTitle = (nombre && nombre.split(/[.]/)[0]?.trim()) || nombre;
+            const rawTitle =
+              (nombre && nombre.split(/[.]/)[0]?.trim()) || nombre;
             const displayName = sanitizeMealTitle(rawTitle);
             currentMeal = { tipo, nombre: displayName, ingredientes: [] };
             const inlineIngs = parseInlineIngredients(nombre);

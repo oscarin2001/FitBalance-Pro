@@ -18,7 +18,9 @@ async function getUserIdFromRequest(request) {
       const nt = await getToken({ req: request, secret });
       if (nt?.email) {
         // Buscar auth por email para obtener usuarioId
-        const auth = await prisma.auth.findUnique({ where: { email: nt.email.toLowerCase() } });
+        const auth = await prisma.auth.findUnique({
+          where: { email: nt.email.toLowerCase() },
+        });
         if (auth?.usuarioId) return auth.usuarioId;
       }
     } catch {}
@@ -39,7 +41,8 @@ async function getUserIdFromRequest(request) {
 export async function GET(request) {
   try {
     const userId = await getUserIdFromRequest(request);
-    if (!userId) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    if (!userId)
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
     const [user, auth] = await Promise.all([
       prisma.usuario.findUnique({ where: { id: userId } }),
@@ -48,7 +51,10 @@ export async function GET(request) {
     if (!user) {
       // Si el token existe pero el usuario no, invalidar cookie y forzar re-login
       const cookieName = getCookieName();
-      const res = NextResponse.json({ error: "No autorizado" }, { status: 401 });
+      const res = NextResponse.json(
+        { error: "No autorizado" },
+        { status: 401 }
+      );
       res.cookies.set(cookieName, "", { path: "/", maxAge: 0 });
       return res;
     }
@@ -59,7 +65,11 @@ export async function GET(request) {
     return NextResponse.json({ user: result }, { status: 200 });
   } catch (e) {
     console.error("/api/account/profile GET error", e);
-    return NextResponse.json({ error: "Error del servidor" }, { status: 500 });
+    // devolver detalles mínimos en dev para ayudar al diagnóstico
+    return NextResponse.json(
+      { error: "Error del servidor", details: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
@@ -114,14 +124,21 @@ export async function POST(request) {
     }
 
     // Normalizar tipos
-    if (payload.altura_cm !== undefined) payload.altura_cm = Number(payload.altura_cm);
-    if (payload.peso_kg !== undefined) payload.peso_kg = Number(payload.peso_kg);
-    if (payload.fecha_nacimiento) payload.fecha_nacimiento = new Date(payload.fecha_nacimiento);
+    if (payload.altura_cm !== undefined)
+      payload.altura_cm = Number(payload.altura_cm);
+    if (payload.peso_kg !== undefined)
+      payload.peso_kg = Number(payload.peso_kg);
+    if (payload.fecha_nacimiento)
+      payload.fecha_nacimiento = new Date(payload.fecha_nacimiento);
     // Permitir null para limpiar el objetivo de peso sin convertirlo a 0
-    if (payload.peso_objetivo_kg !== undefined && payload.peso_objetivo_kg !== null) {
+    if (
+      payload.peso_objetivo_kg !== undefined &&
+      payload.peso_objetivo_kg !== null
+    ) {
       payload.peso_objetivo_kg = Number(payload.peso_objetivo_kg);
     }
-  if (payload.proteinas_g_obj !== undefined) payload.proteinas_g_obj = Number(payload.proteinas_g_obj);
+    if (payload.proteinas_g_obj !== undefined)
+      payload.proteinas_g_obj = Number(payload.proteinas_g_obj);
 
     // Leer usuario actual y auth para validar con datos existentes
     const [current, auth] = await Promise.all([
@@ -130,7 +147,10 @@ export async function POST(request) {
     ]);
     if (!current) {
       const cookieName = getCookieName();
-      const res = NextResponse.json({ error: "No autorizado" }, { status: 401 });
+      const res = NextResponse.json(
+        { error: "No autorizado" },
+        { status: 401 }
+      );
       res.cookies.set(cookieName, "", { path: "/", maxAge: 0 });
       return res;
     }
@@ -138,18 +158,28 @@ export async function POST(request) {
     // Si vienen preferencias_alimentos, hacer merge con las existentes para no perder claves (enabledMeals, mealHours, etc.)
     if (payload.preferencias_alimentos !== undefined) {
       try {
-        const existing = current.preferencias_alimentos && typeof current.preferencias_alimentos === "object"
-          ? current.preferencias_alimentos
-          : {};
-        const incoming = typeof payload.preferencias_alimentos === "string"
-          ? JSON.parse(payload.preferencias_alimentos)
-          : (payload.preferencias_alimentos || {});
+        const existing =
+          current.preferencias_alimentos &&
+          typeof current.preferencias_alimentos === "object"
+            ? current.preferencias_alimentos
+            : {};
+        const incoming =
+          typeof payload.preferencias_alimentos === "string"
+            ? JSON.parse(payload.preferencias_alimentos)
+            : payload.preferencias_alimentos || {};
         const deepMerge = (a, b) => {
           const out = { ...a };
           for (const k of Object.keys(b || {})) {
             const va = out[k];
             const vb = b[k];
-            if (va && typeof va === "object" && !Array.isArray(va) && vb && typeof vb === "object" && !Array.isArray(vb)) {
+            if (
+              va &&
+              typeof va === "object" &&
+              !Array.isArray(va) &&
+              vb &&
+              typeof vb === "object" &&
+              !Array.isArray(vb)
+            ) {
               out[k] = { ...va, ...vb };
             } else {
               out[k] = vb;
@@ -164,7 +194,11 @@ export async function POST(request) {
     }
 
     // Si estamos en el paso 'objective' y el objetivo cambia, limpiar peso_objetivo_kg para evitar inconsistencias
-    if (payload.onboarding_step === 'objective' && payload.objetivo && payload.objetivo !== current.objetivo) {
+    if (
+      payload.onboarding_step === "objective" &&
+      payload.objetivo &&
+      payload.objetivo !== current.objetivo
+    ) {
       payload.peso_objetivo_kg = null;
     }
     const nextState = { ...current, ...payload };
@@ -175,11 +209,19 @@ export async function POST(request) {
       const dob = new Date(payload.fecha_nacimiento);
       const now = new Date();
       if (dob > now) {
-        return NextResponse.json({ error: "Fecha de nacimiento inválida (futuro)" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Fecha de nacimiento inválida (futuro)" },
+          { status: 400 }
+        );
       }
-      const age = Math.floor((now.getTime() - dob.getTime()) / (365.25 * 24 * 3600 * 1000));
+      const age = Math.floor(
+        (now.getTime() - dob.getTime()) / (365.25 * 24 * 3600 * 1000)
+      );
       if (age < 16) {
-        return NextResponse.json({ error: "Debes tener al menos 16 años" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Debes tener al menos 16 años" },
+          { status: 400 }
+        );
       }
     }
 
@@ -190,13 +232,34 @@ export async function POST(request) {
     const pesoObjetivo = nextState.peso_objetivo_kg;
     if (pesoObjetivo != null && objetivo && pesoActual != null) {
       if (objetivo === "Ganar_musculo" && !(pesoObjetivo > pesoActual)) {
-        return NextResponse.json({ error: "Para ganar músculo, el peso objetivo debe ser mayor al actual" }, { status: 400 });
+        return NextResponse.json(
+          {
+            error:
+              "Para ganar músculo, el peso objetivo debe ser mayor al actual",
+          },
+          { status: 400 }
+        );
       }
       if (objetivo === "Bajar_grasa" && !(pesoObjetivo < pesoActual)) {
-        return NextResponse.json({ error: "Para bajar grasa, el peso objetivo debe ser menor al actual" }, { status: 400 });
+        return NextResponse.json(
+          {
+            error:
+              "Para bajar grasa, el peso objetivo debe ser menor al actual",
+          },
+          { status: 400 }
+        );
       }
-      if (objetivo === "Mantenimiento" && Math.abs(pesoObjetivo - pesoActual) > 0.5) {
-        return NextResponse.json({ error: "Para mantenimiento, el peso objetivo debe ser similar al actual" }, { status: 400 });
+      if (
+        objetivo === "Mantenimiento" &&
+        Math.abs(pesoObjetivo - pesoActual) > 0.5
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Para mantenimiento, el peso objetivo debe ser similar al actual",
+          },
+          { status: 400 }
+        );
       }
     }
 
@@ -215,26 +278,46 @@ export async function POST(request) {
       // Verificar contraseña
       const pwd = payload.password;
       if (!pwd || typeof pwd !== "string") {
-        return NextResponse.json({ error: "Contraseña requerida para cambiar email" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Contraseña requerida para cambiar email" },
+          { status: 400 }
+        );
       }
       if (!auth || !auth.password_hash) {
-        return NextResponse.json({ error: "No se pudo validar credenciales" }, { status: 400 });
+        return NextResponse.json(
+          { error: "No se pudo validar credenciales" },
+          { status: 400 }
+        );
       }
       try {
         const [salt, stored] = String(auth.password_hash).split(":");
         const derived = scryptSync(pwd, salt, 64).toString("hex");
-        const ok = timingSafeEqual(Buffer.from(stored, "hex"), Buffer.from(derived, "hex"));
+        const ok = timingSafeEqual(
+          Buffer.from(stored, "hex"),
+          Buffer.from(derived, "hex")
+        );
         if (!ok) {
-          return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 401 });
+          return NextResponse.json(
+            { error: "Contraseña incorrecta" },
+            { status: 401 }
+          );
         }
       } catch {
-        return NextResponse.json({ error: "Error validando contraseña" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Error validando contraseña" },
+          { status: 400 }
+        );
       }
 
       // Evitar colisiones de email
-      const existing = await prisma.auth.findUnique({ where: { email: newEmail } });
+      const existing = await prisma.auth.findUnique({
+        where: { email: newEmail },
+      });
       if (existing && existing.usuarioId !== userId) {
-        return NextResponse.json({ error: "El email ya está en uso" }, { status: 409 });
+        return NextResponse.json(
+          { error: "El email ya está en uso" },
+          { status: 409 }
+        );
       }
 
       await prisma.auth.update({
@@ -243,9 +326,16 @@ export async function POST(request) {
       });
     }
 
-    return NextResponse.json({ ok: true, usuario: { id: updated.id } }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, usuario: { id: updated.id } },
+      { status: 200 }
+    );
   } catch (e) {
-    console.error("/api/account/profile error", e);
-    return NextResponse.json({ error: "Error del servidor" }, { status: 500 });
+    console.error("/api/account/profile POST error", e);
+    // devolver detalles mínimos en dev para ayudar al diagnóstico
+    return NextResponse.json(
+      { error: "Error del servidor", details: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }

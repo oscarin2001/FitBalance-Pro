@@ -8,254 +8,932 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  // In dev we point to local file; in production we can override with Turso using adapter
-  url      = env("TURSO_DATABASE_URL")
+  // Local SQLite por defecto; en producción usa env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
-model Usuario {
-  id                     Int                  @id @default(autoincrement())
-  nombre                 String
-  apellido               String
-  fecha_nacimiento       DateTime
-  sexo                   String
-  altura_cm              Float? // Opcional
-  peso_kg                Float? // Opcional
-  objetivo               Objetivo? // Opcional
-  nivel_actividad        NivelActividad? // Opcional
-  pais                   String? // País de residencia (opcional)
-  peso_objetivo_kg       Float? // Objetivo de peso (opcional)
-  velocidad_cambio       VelocidadCambio? // Rapido/Moderado/Lento (opcional)
-  terminos_aceptados     Boolean              @default(false)
-  fecha_creacion         DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
-  comidas                Comida[]
-  progreso               ProgresoCorporal[]
-  auth                   Auth? // Relación uno a uno con credenciales
-  // Progreso de Onboarding
-  onboarding_completed   Boolean              @default(false)
-  onboarding_step        String?
-  // Preferencias de alimentos seleccionadas en onboarding (JSON con claves: carbs, proteins, fiber, fats, snacks)
-  preferencias_alimentos Json?
-  // Objetivos derivados del plan de IA
-  kcal_objetivo          Float?
-  proteinas_g_obj        Float?
-  grasas_g_obj           Float?
-  carbohidratos_g_obj    Float?
-  agua_litros_obj        Float?
-  objetivo_eta_semanas   Float? // Semanas estimadas para alcanzar el objetivo de peso
-  objetivo_eta_fecha     DateTime? // Fecha estimada (aproximada) de cumplimiento del objetivo
-  plan_ai                Json?
-  hidratacion            HidratacionDia[]
-  // Relaciones inversas requeridas por Prisma
-  planes                 PlanComida[]
-  cumplimientos          CumplimientoComida[]
-  cumplimientos_dieta   CumplimientoDieta[] // Relación con el modelo CumplimientoDieta
-  // Alimentos elegidos en onboarding
-  alimentos_seleccion    UsuarioAlimento[]
-  bebidas_plan           UsuarioBebida[]
-  // Preferencia: intervalo de semanas entre mediciones corporales (2-4 sugerido)
-  measurement_interval_weeks Int?
-  // Campo para almacenar los días de dieta/entrenamiento
-  dias_dieta            Json? // Días seleccionados para la dieta (opcional)
+// ===================================================================
+// 1. AUTH & ROLES
+// ===================================================================
+model Account {
+  id                Int         @id @default(autoincrement())
+  email             String      @unique
+  passwordHash      String
+  role              UserRole    @default(CLIENT)
+  accountType       AccountType
+  isVerified        Boolean     @default(false)
+  verificationToken String?     @unique
+  resetToken        String?     @unique
+  lastLogin         DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  deletedAt         DateTime?
+
+  // 1-1 exclusivas (XOR garantizado por backend)
+  userId         Int?          @unique
+  user           User?         @relation("AccountToUser", fields: [userId], references: [id])
+  professionalId Int?          @unique
+  professional   Professional? @relation("AccountToProfessional", fields: [professionalId], references: [id])
+
+  // Multi-tenant
+  ownedOrganizations Organization[]       @relation("OrganizationOwner")
+  memberships        OrganizationMember[]
+  invitedMembers     OrganizationMember[] @relation("InvitedBy")
+
+  permissionRoleId Int?
+  permissionRole   PermissionRole? @relation(fields: [permissionRoleId], references: [id])
+  auditLogs        AuditLog[]      @relation("AuditPerformedBy")
+
+  @@index([email])
 }
 
-model Auth {
-  id                 Int       @id @default(autoincrement())
-  usuario            Usuario   @relation(fields: [usuarioId], references: [id])
-  usuarioId          Int       @unique
-  email              String    @unique
-  password_hash      String
-  verificado         Boolean   @default(false)
-  token_verificacion String?
-  reset_token        String?
-  last_login         DateTime?
-}
-
-model Alimento {
-  id            Int              @id @default(autoincrement())
-  nombre        String
-  categoria     String?
-  categoria_enum AlimentoCategoria?
-  calorias      Float?
-  proteinas     Float?
-  carbohidratos Float?
-  grasas        Float?
-  porcion       String?
-  region        String?
-  comidas       Comida[]
-  recetas       RecetaAlimento[]
-  usuarios      UsuarioAlimento[]
-  usuario_bebidas UsuarioBebida[]
-}
-
-model Receta {
-  id            Int              @id @default(autoincrement())
-  nombre        String
-  instrucciones String?
-  porciones     Int              @default(1)
-  tipo          ComidaTipo?
-  alimentos     RecetaAlimento[]
-  comidas       Comida[]
-  // Relación inversa con PlanComida
-  planes        PlanComida[]
-}
-
-model RecetaAlimento {
-  id         Int      @id @default(autoincrement())
-  receta     Receta   @relation(fields: [recetaId], references: [id])
-  recetaId   Int
-  alimento   Alimento @relation(fields: [alimentoId], references: [id])
-  alimentoId Int
-  gramos     Float
-}
-
-model Comida {
-  id            Int        @id @default(autoincrement())
-  usuario       Usuario    @relation(fields: [usuarioId], references: [id])
-  usuarioId     Int
-  fecha         DateTime
-  comida_tipo   ComidaTipo
-  receta        Receta?    @relation(fields: [recetaId], references: [id])
-  recetaId      Int?
-  alimento      Alimento?  @relation(fields: [alimentoId], references: [id])
-  alimentoId    Int?
-  gramos        Float?
-  calorias      Float?
-  proteinas     Float?
-  carbohidratos Float?
-  grasas        Float?
-}
-
-model HidratacionDia {
-  id         Int      @id @default(autoincrement())
-  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
-  usuarioId  Int
-  fecha      DateTime
-  litros     Float    @default(0)
-  completado Boolean  @default(false)
-
-  @@index([usuarioId, fecha])
-}
-
-model ProgresoCorporal {
-  id              Int      @id @default(autoincrement())
-  usuario         Usuario  @relation(fields: [usuarioId], references: [id])
-  usuarioId       Int
-  fecha           DateTime
-  peso_kg         Float?
-  grasa_percent   Float?
-  musculo_percent Float?
-  agua_percent    Float?
-  imc             Float?
-  cintura_cm      Float?
-  cadera_cm       Float?
-  cuello_cm       Float?
-  pecho_cm        Float?
-  brazo_cm        Float?
-  muslo_cm        Float?
-  gluteo_cm       Float?
-  foto_url        String?
-  notas           String?
-  fuente          String?
-
-  @@unique([usuarioId, fecha])
-  @@index([usuarioId, fecha])
-}
-
-model PlanComida {
-  id          Int        @id @default(autoincrement())
-  usuario     Usuario    @relation(fields: [usuarioId], references: [id])
-  usuarioId   Int
-  comida_tipo ComidaTipo
-  receta      Receta     @relation(fields: [recetaId], references: [id])
-  recetaId    Int
-  porciones   Int        @default(1)
-  overrides   Json? // mapa alimentoId->gramos para ajustes de IA/usuario
-
-  @@unique([usuarioId, comida_tipo])
-}
-
-model CumplimientoComida {
-  id          Int        @id @default(autoincrement())
-  usuario     Usuario    @relation(fields: [usuarioId], references: [id])
-  usuarioId   Int
-  fecha       DateTime
-  comida_tipo ComidaTipo
-  cumplido    Boolean    @default(false)
-  hora_real   DateTime?
-
-  @@index([usuarioId, fecha, comida_tipo])
-  @@unique([usuarioId, fecha, comida_tipo])
-}
-
-model CumplimientoDieta {
-  id        Int      @id @default(autoincrement())
-  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
-  usuarioId Int
-  fecha     DateTime
-  cumplido  Boolean  // Indica si cumplió o no
-}
-
-// Relación N:N explícita entre Usuario y Alimento para onboarding y preferencias
-model UsuarioAlimento {
+model PermissionRole {
   id          Int       @id @default(autoincrement())
-  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
-  usuarioId   Int
-  alimento    Alimento  @relation(fields: [alimentoId], references: [id])
-  alimentoId  Int
-  categoria   String?
-  categoria_enum AlimentoCategoria?
-  prioridad   Int?
-
-  @@unique([usuarioId, alimentoId])
+  name        String    @unique
+  slug        String    @unique
+  permissions Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  accounts    Account[]
 }
 
-// Plan diario de bebidas sugeridas (volúmenes concretos no mezclados con agua total objetivo)
-model UsuarioBebida {
+// ===================================================================
+// 2. USER & CLIENT PROFILE
+// ===================================================================
+model User {
+  id      Int      @id @default(autoincrement())
+  account Account? @relation("AccountToUser")
+
+  firstName String
+  lastName  String
+  birthDate DateTime
+  gender    String
+  heightCm  Float?
+  weightKg  Float?
+  country   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  profile ClientProfile?
+
+  loggedMeals         LoggedMeal[]
+  bodyProgress        BodyProgress[]
+  hydration           DailyHydration[]
+  manualMealPlans     UserDailyMealPlan[]
+  exerciseRoutines    ExerciseRoutine[]
+  medicalConditions   MedicalCondition[]
+  dietaryRestrictions DietaryRestriction[]
+  foodPreferences     FoodPreference[]
+  favoriteFoods       UserFavoriteFood[]
+  favoriteDrinks      UserFavoriteDrink[]
+  activityLogs        ActivityLog[]
+  motivationalNotes   MotivationalNote[]
+  assignments         ClientProfessionalAssignment[]
+  nutritionPlans      NutritionPlan[]
+  planAssignments     NutritionPlanMealAssignment[]
+  subscriptions       ClientSubscription[]
+}
+
+model ClientProfile {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+
+  goal                Goal?
+  activityLevel       ActivityLevel?
+  targetWeightKg      Float?
+  weightChangeSpeed   ChangeSpeed?
+  termsAccepted       Boolean        @default(false)
+  onboardingCompleted Boolean        @default(false)
+  onboardingStep      String?
+
+  targetCalories    Float?
+  targetProteinG    Float?
+  targetFatG        Float?
+  targetCarbsG      Float?
+  targetWaterLiters Float?
+
+  estimatedWeeksToGoal     Float?
+  targetDate               DateTime?
+  aiPlan                   Json?
+  measurementIntervalWeeks Int?
+  dietDays                 Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ===================================================================
+// 3. ORGANIZATION
+// ===================================================================
+model Organization {
+  id        Int       @id @default(autoincrement())
+  name      String
+  slug      String    @unique
+  ownerId   Int
+  owner     Account   @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  metadata  Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members                   OrganizationMember[]
+  professionals             Professional[]
+  subscriptionPlans         SubscriptionPlan[]
+  payoutRules               PayoutRule[]
+  professionalOrganizations ProfessionalOrganization[]
+  branches                  Branch[]
+  branchesCount             Int                        @default(0)
+
+  @@index([slug])
+}
+
+model OrganizationMember {
+  id                  Int          @id @default(autoincrement())
+  organizationId      Int
+  organization        Organization @relation(fields: [organizationId], references: [id])
+  accountId           Int
+  account             Account      @relation(fields: [accountId], references: [id])
+  role                OrgRole      @default(MEMBER)
+  status              MemberStatus @default(ACTIVE)
+  invitedById         Int?
+  invitedBy           Account?     @relation("InvitedBy", fields: [invitedById], references: [id])
+  invitationToken     String?      @unique
+  invitationExpiresAt DateTime?
+  acceptedAt          DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@unique([organizationId, accountId])
+}
+
+// ===================================================================
+// 4. PROFESSIONALS
+// ===================================================================
+model Professional {
+  id      Int      @id @default(autoincrement())
+  account Account? @relation("AccountToProfessional")
+
+  firstName String
+  lastName  String?
+  birthDate DateTime?
+  gender    String?
+  nutritionistSubtype String?
+  type      ProfessionalType
+  modality  ProfessionalModality @default(INDEPENDENT)
+  email     String?              @unique
+  phone     String?
+  country   String?
+
+  organizationId Int?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  // Optional association to a Branch (sucursal) for local assignment
+  branchId Int?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  // Branches this professional manages
+  managedBranches Branch[] @relation("BranchManager")
+
+  clientsCount Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  assignments                 ClientProfessionalAssignment[]
+  nutritionPlans              NutritionPlan[]
+  exerciseRoutines            ExerciseRoutine[]
+  motivationalNotes           MotivationalNote[]
+  bodyProgress                BodyProgress[]
+  subscriptionsAsNutritionist ClientSubscription[]           @relation("SubscriptionNutritionist")
+  subscriptionsAsCoach        ClientSubscription[]           @relation("SubscriptionCoach")
+  payouts                     Payout[]
+  professionalOrganizations   ProfessionalOrganization[]
+}
+
+model ClientProfessionalAssignment {
+  id             Int              @id @default(autoincrement())
+  userId         Int
+  user           User             @relation(fields: [userId], references: [id])
+  professionalId Int
+  professional   Professional     @relation(fields: [professionalId], references: [id])
+  type           ProfessionalType
+  status         AssignmentStatus @default(ACTIVE)
+  assignedAt     DateTime         @default(now())
+  notes          String?
+
+  @@unique([userId, professionalId, type])
+}
+
+// ===================================================================
+// 5. NUTRITION SYSTEM
+// ===================================================================
+model NutritionPlan {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id])
+  nutritionistId Int
+  nutritionist   Professional @relation(fields: [nutritionistId], references: [id])
+
+  name           String
+  goal           String?
+  startDate      DateTime   @default(now())
+  endDate        DateTime?
+  totalCalories  Int?
+  proteinG       Float?
+  carbsG         Float?
+  fatG           Float?
+  micronutrients Json?
+  notes          String?
+  status         PlanStatus @default(ACTIVE)
+
+  mealSlots      NutritionPlanMeal[]
+  dailyAdherence PlanAdherence[]
+  assignments    NutritionPlanMealAssignment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model NutritionPlanMeal {
+  id          Int           @id @default(autoincrement())
+  planId      Int
+  plan        NutritionPlan @relation(fields: [planId], references: [id])
+  order       Int           @default(0)
+  label       String?
+  name        String?
+  calories    Int?
+  proteinG    Float?
+  carbsG      Float?
+  fatG        Float?
+  ingredients Json?
+
+  assignments NutritionPlanMealAssignment[]
+
+  @@index([planId, order])
+}
+
+model NutritionPlanMealAssignment {
+  id              Int               @id @default(autoincrement())
+  planMealId      Int
+  planMeal        NutritionPlanMeal @relation(fields: [planMealId], references: [id])
+  userId          Int
+  user            User              @relation(fields: [userId], references: [id])
+  date            DateTime
+  nutritionPlanId Int?
+  nutritionPlan   NutritionPlan?    @relation(fields: [nutritionPlanId], references: [id])
+  LoggedMeal      LoggedMeal[]
+
+  @@unique([planMealId, userId, date])
+  @@index([userId, date])
+}
+
+model PlanAdherence {
+  id         Int             @id @default(autoincrement())
+  planId     Int
+  plan       NutritionPlan   @relation(fields: [planId], references: [id])
+  date       DateTime
+  percentage Float?
+  comments   String?
+  status     AdherenceStatus @default(PARTIAL)
+
+  @@unique([planId, date])
+}
+
+model UserDailyMealPlan {
   id        Int      @id @default(autoincrement())
-  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
-  usuarioId Int
-  bebida    Alimento @relation(fields: [bebidaId], references: [id])
-  bebidaId  Int
-  ml        Int      // porción en mililitros (cada entrada ≤250ml)
-  momento   String?  // Desayuno | Almuerzo | Cena | Snack | General
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  date      DateTime
+  recipeId  Int
+  recipe    Recipe   @relation(fields: [recipeId], references: [id])
+  mealType  MealType
+  order     Int?
+  portions  Int      @default(1)
+  overrides Json?
 
-  @@index([usuarioId])
+  @@unique([userId, date, order])
 }
 
-enum Objetivo {
-  Bajar_grasa
-  Ganar_musculo
-  Mantenimiento
+// ===================================================================
+// 5. FOOD & RECIPES CON MICROS
+// ===================================================================
+model Food {
+  id           Int           @id @default(autoincrement())
+  name         String
+  category     String?
+  categoryEnum FoodCategory?
+  serving      String?
+  region       String?
+
+  // Macros principales (por porción)
+  calories Float?
+  proteinG Float?
+  carbsG   Float?
+  fatG     Float?
+  fiberG   Float?
+  sugarG   Float?
+
+  // Micronutrientes clave
+  vitaminA   Float?
+  vitaminC   Float?
+  vitaminD   Float?
+  vitaminE   Float?
+  vitaminK   Float?
+  thiamin    Float?
+  riboflavin Float?
+  niacin     Float?
+  vitaminB6  Float?
+  folate     Float?
+  vitaminB12 Float?
+  calcium    Float?
+  iron       Float?
+  magnesium  Float?
+  phosphorus Float?
+  potassium  Float?
+  sodium     Float?
+  zinc       Float?
+  copper     Float?
+  manganese  Float?
+  selenium   Float?
+
+  loggedMeals LoggedMeal[]
+  recipes     RecipeIngredient[]
+  favorites   UserFavoriteFood[]
+  drinks      UserFavoriteDrink[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }
 
-enum ComidaTipo {
-  Desayuno
-  Almuerzo
-  Cena
-  Snack
+model Recipe {
+  id           Int       @id @default(autoincrement())
+  name         String
+  instructions String?
+  servings     Int       @default(1)
+  mealType     MealType?
+
+  ingredients RecipeIngredient[]
+  loggedMeals LoggedMeal[]
+  manualPlans UserDailyMealPlan[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }
 
-enum NivelActividad {
-  Sedentario
-  Ligero
-  Moderado
-  Activo
-  Extremo
+model RecipeIngredient {
+  id       Int    @id @default(autoincrement())
+  recipeId Int
+  recipe   Recipe @relation(fields: [recipeId], references: [id])
+  foodId   Int
+  food     Food   @relation(fields: [foodId], references: [id])
+  grams    Float
+
+  @@unique([recipeId, foodId])
 }
 
-enum VelocidadCambio {
-  Rapido
-  Moderado
-  Lento
+// ===================================================================
+// 6. LOGGED MEALS CON MICROS CALCULADOS
+// ===================================================================
+model LoggedMeal {
+  id       Int      @id @default(autoincrement())
+  userId   Int
+  user     User     @relation(fields: [userId], references: [id])
+  date     DateTime
+  mealType MealType
+  label    String?
+  order    Int?
+
+  recipeId Int?
+  recipe   Recipe? @relation(fields: [recipeId], references: [id])
+  foodId   Int?
+  food     Food?   @relation(fields: [foodId], references: [id])
+  grams    Float?
+
+  // Macros calculados
+  calories Float?
+  proteinG Float?
+  carbsG   Float?
+  fatG     Float?
+  fiberG   Float?
+  sugarG   Float?
+
+  // Micronutrientes calculados
+  vitaminA  Float?
+  vitaminC  Float?
+  vitaminD  Float?
+  calcium   Float?
+  iron      Float?
+  potassium Float?
+  magnesium Float?
+  sodium    Float?
+
+  isFromPlan       Boolean                      @default(false)
+  planAssignmentId Int?
+  planAssignment   NutritionPlanMealAssignment? @relation(fields: [planAssignmentId], references: [id])
+  completedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
 }
 
-// Categorías tipadas para alimentos/selecciones de usuario
-enum AlimentoCategoria {
-  Proteinas
-  Carbohidratos
-  Fibras
-  Snacks
-  Grasos
-  BebidasInfusiones
+// ===================================================================
+// 8. RESTO DE MODELOS
+// ===================================================================
+model BodyProgress {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id])
+  professionalId Int?
+  professional   Professional? @relation(fields: [professionalId], references: [id])
+  date           DateTime
+  weightKg       Float?
+  bodyFatPercent Float?
+  musclePercent  Float?
+  waterPercent   Float?
+  bmi            Float?
+  waistCm        Float?
+  hipCm          Float?
+  neckCm         Float?
+  chestCm        Float?
+  armCm          Float?
+  thighCm        Float?
+  gluteCm        Float?
+  photoUrl       String?
+  notes          String?
+  source         String?
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model DailyHydration {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  date      DateTime @default(now())
+  liters    Float    @default(0)
+  completed Boolean  @default(false)
+
+  @@unique([userId, date])
+}
+
+model ExerciseRoutine {
+  id              Int          @id @default(autoincrement())
+  userId          Int
+  user            User         @relation(fields: [userId], references: [id])
+  coachId         Int
+  coach           Professional @relation(fields: [coachId], references: [id])
+  name            String
+  goal            String?
+  type            RoutineType
+  weeklyFrequency Int?
+  weekDays        Json?
+  notes           String?
+
+  blocks   RoutineBlock[]
+  tracking RoutineTracking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RoutineBlock {
+  id        Int               @id @default(autoincrement())
+  routineId Int
+  routine   ExerciseRoutine   @relation(fields: [routineId], references: [id])
+  day       WeekDay
+  intensity String?
+  exercises RoutineExercise[]
+}
+
+model RoutineExercise {
+  id          Int          @id @default(autoincrement())
+  blockId     Int
+  block       RoutineBlock @relation(fields: [blockId], references: [id])
+  name        String
+  sets        Int?
+  reps        Int?
+  durationMin Int?
+  weightKg    Float?
+  restSeconds Int?
+}
+
+model RoutineTracking {
+  id         Int             @id @default(autoincrement())
+  routineId  Int
+  routine    ExerciseRoutine @relation(fields: [routineId], references: [id])
+  date       DateTime
+  compliance Float?
+  comments   String?
+
+  @@unique([routineId, date])
+}
+
+model MotivationalNote {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id])
+  professionalId Int
+  professional   Professional @relation(fields: [professionalId], references: [id])
+  message        String
+  date           DateTime     @default(now())
+}
+
+model MedicalCondition {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  detail    String?
+  createdAt DateTime @default(now())
+}
+
+model DietaryRestriction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  detail    String?
+  createdAt DateTime @default(now())
+}
+
+model FoodPreference {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  detail    String?
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id            Int            @id @default(autoincrement())
+  userId        Int
+  user          User           @relation(fields: [userId], references: [id])
+  activityLevel ActivityLevel?
+  sleepHours    Float?
+  restrictions  String?
+  injuries      String?
+  date          DateTime       @default(now())
+}
+
+model UserFavoriteFood {
+  userId   Int
+  user     User @relation(fields: [userId], references: [id])
+  foodId   Int
+  food     Food @relation(fields: [foodId], references: [id])
+  priority Int?
+
+  @@unique([userId, foodId])
+}
+
+model UserFavoriteDrink {
+  userId  Int
+  user    User    @relation(fields: [userId], references: [id])
+  drinkId Int
+  drink   Food    @relation(fields: [drinkId], references: [id])
+  ml      Int
+  moment  String?
+
+  @@id([userId, drinkId])
+  @@index([userId])
+}
+
+// ===================================================================
+// 9. AUDIT LOG (limpio y enterprise)
+// ===================================================================
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  entity        String
+  entityId      Int
+  action        String // create | update | delete
+  performedById Int?
+  performedBy   Account? @relation("AuditPerformedBy", fields: [performedById], references: [id])
+  timestamp     DateTime @default(now())
+  changes       Json?
+  oldValues     Json?
+  ipAddress     String?
+  userAgent     String?
+  context       String?
+  reason        String?
+
+  @@index([entity, entityId])
+  @@index([performedById, timestamp])
+}
+
+// ===================================================================
+// 10. PLANES DE SUSCRIPCIÓN & PAGOS (EL DINERO REAL)
+// ===================================================================
+
+// Planes que ofrece cada organización (o la plataforma)
+model SubscriptionPlan {
+  id             Int           @id @default(autoincrement())
+  organizationId Int? // null = plan global de la plataforma
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  name          String // "Premium Mensual", "Seguimiento Nutrición", "Gym Elite"
+  slug          String
+  description   String?
+  priceCents    Int // 2990 = 29.90€
+  currency      String        @default("EUR")
+  billingPeriod BillingPeriod // MONTHLY, QUARTERLY, YEARLY
+  features      Json? // ["Chat ilimitado", "Plan semanal", "Videollamadas"]
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions ClientSubscription[]
+
+  @@unique([organizationId, slug])
+}
+
+// Suscripción activa de un cliente
+model ClientSubscription {
+  id     Int              @id @default(autoincrement())
+  userId Int
+  user   User             @relation(fields: [userId], references: [id])
+  planId Int
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  // Profesionales asignados (puede tener coach + nutri)
+  nutritionistId Int?
+  nutritionist   Professional? @relation("SubscriptionNutritionist", fields: [nutritionistId], references: [id])
+  coachId        Int?
+  coach          Professional? @relation("SubscriptionCoach", fields: [coachId], references: [id])
+
+  status          SubscriptionStatus @default(ACTIVE)
+  startDate       DateTime           @default(now())
+  endDate         DateTime? // null = indefinido (renovación auto)
+  nextBillingDate DateTime?
+  canceledAt      DateTime?
+
+  // Stripe, PayPal, etc.
+  paymentProvider       String? // "stripe", "paypal"
+  paymentCustomerId     String?
+  paymentSubscriptionId String?
+
+  // Historial de pagos
+  payments Payment[]
+
+  // Sucursal donde se originó la suscripción (opcional)
+  branchId Int?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, planId, status]) // evita duplicados activos
+}
+
+// Pagos recibidos (uno por cobro)
+model Payment {
+  id             Int                @id @default(autoincrement())
+  subscriptionId Int
+  subscription   ClientSubscription @relation(fields: [subscriptionId], references: [id])
+
+  amountCents       Int
+  currency          String        @default("EUR")
+  status            PaymentStatus
+  paymentProvider   String
+  providerPaymentId String?
+
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  // Atribución opcional de pago a una sucursal
+  branchId Int?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  // Para comisiones
+  payouts Payout[]
+}
+
+// Reglas de reparto (ej: gym se queda 30%, pro 70%)
+model PayoutRule {
+  id             Int           @id @default(autoincrement())
+  organizationId Int?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  name             String // "Comisión Estándar", "Plan Premium", etc.
+  professionalRate Float // 0.70 = pro se queda 70%
+  platformFeeRate  Float // 0.05 = plataforma se queda 5% (opcional)
+  isDefault        Boolean @default(false)
+
+  createdAt DateTime @default(now())
+}
+
+// Pago que le llega al profesional
+model Payout {
+  id             Int          @id @default(autoincrement())
+  professionalId Int
+  professional   Professional @relation(fields: [professionalId], references: [id])
+  paymentId      Int
+  payment        Payment      @relation(fields: [paymentId], references: [id])
+
+  amountCents Int
+  status      PayoutStatus @default(PENDING)
+  paidAt      DateTime?
+
+  createdAt DateTime @default(now())
+}
+
+// ===================================================================
+// RELACIONES MUCHOS-A-MUCHOS ENTRE PROS Y ORGANIZACIONES (LO QUE PREGUNTABAS)
+// ===================================================================
+
+// Un pro puede estar en varios gyms, un gym puede tener muchos pros
+model ProfessionalOrganization {
+  professionalId Int
+  professional   Professional @relation(fields: [professionalId], references: [id])
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  role           OrgRole      @default(MEMBER)
+  joinedAt       DateTime     @default(now())
+
+  @@id([professionalId, organizationId])
+}
+
+// Sucursales/ubicaciones de una organizacion
+model Branch {
+  id             Int          @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name      String
+  address   String?
+  city      String?
+  country   String?
+  phone     String?
+  timezone  String?
+  capacity  Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Back-relations for optional assignments
+  professionals Professional[]
+  subscriptions ClientSubscription[]
+  payments      Payment[]
+
+  // Optional manager assigned to this branch
+  managerProfessionalId Int?
+  managerProfessional   Professional? @relation("BranchManager", fields: [managerProfessionalId], references: [id])
+
+  @@index([organizationId])
+}
+
+// ===================================================================
+// ENUMS (TODOS CORRECTOS Y CERRADOS)
+// ===================================================================
+
+enum UserRole {
+  CLIENT
+  NUTRITIONIST
+  COACH
+  ADMIN
+}
+
+enum AccountType {
+  USER
+  PROFESSIONAL
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  NUTRITIONIST
+  COACH
+  BRANCH_MANAGER
+  MEMBER
+}
+
+enum BillingPeriod {
+  MONTHLY
+  QUARTERLY
+  SEMESTRIAL
+  YEARLY
+  ONE_TIME
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELED
+  EXPIRED
+  PENDING
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum MemberStatus {
+  INVITED
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProfessionalType {
+  NUTRITIONIST
+  COACH
+}
+
+enum ProfessionalModality {
+  INDEPENDENT
+  CLINIC
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+}
+
+enum Goal {
+  LOSE_FAT
+  GAIN_MUSCLE
+  MAINTENANCE
+}
+
+enum ActivityLevel {
+  SEDENTARY
+  LIGHT
+  MODERATE
+  ACTIVE
+  EXTREME
+}
+
+enum ChangeSpeed {
+  FAST
+  MODERATE
+  SLOW
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+enum FoodCategory {
+  PROTEIN
+  CARBS
+  FIBER
+  SNACKS
+  FATS
+  DRINKS
+  VEGETABLES
+  FRUITS
+  DAIRY
+  OTHER
+}
+
+enum PlanStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum AdherenceStatus {
+  COMPLETE
+  PARTIAL
+  SKIPPED
+}
+
+enum RoutineType {
+  STRENGTH
+  CARDIO
+  ENDURANCE
+  MOBILITY
+  HYBRID
+}
+
+enum WeekDay {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
 }

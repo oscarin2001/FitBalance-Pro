@@ -59,11 +59,17 @@ export function Hero() {
       setTimeout(() => setInstallNotice(null), 6000);
     };
 
-    window.addEventListener("beforeinstallprompt", handleBeforeInstall as EventListener);
+    window.addEventListener(
+      "beforeinstallprompt",
+      handleBeforeInstall as EventListener
+    );
     window.addEventListener("appinstalled", handleInstalled);
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstall as EventListener);
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstall as EventListener
+      );
       window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
@@ -80,11 +86,11 @@ export function Hero() {
       setInstalling(true);
       try {
         await installPrompt.prompt();
-          const choice = await installPrompt.userChoice;
-          if (choice && choice.outcome === "accepted") {
-            setInstallNotice("La app ya está en el escritorio de tu celular.");
-            setTimeout(() => setInstallNotice(null), 6000);
-          }
+        const choice = await installPrompt.userChoice;
+        if (choice && choice.outcome === "accepted") {
+          setInstallNotice("La app ya está en el escritorio de tu celular.");
+          setTimeout(() => setInstallNotice(null), 6000);
+        }
       } finally {
         setInstalling(false);
         setInstallPrompt(null);
@@ -96,7 +102,8 @@ export function Hero() {
   }, [installPrompt, isStandalone]);
 
   const primaryCtaLabel = useMemo(() => {
-    if (isStandalone) return "Redirígete a tu pantalla principal para ver la app";
+    if (isStandalone)
+      return "Redirígete a tu pantalla principal para ver la app";
     if (installing) return "Abriendo instalación…";
     return "Instalar — Android/iOS";
   }, [isStandalone, installing]);
@@ -113,7 +120,9 @@ export function Hero() {
                 {/* left slot (kept empty on purpose for balance) */}
               </div>
               <div className="flex items-center justify-center">
-                <div className="text-lg font-semibold tracking-tight">FitBalance</div>
+                <div className="text-lg font-semibold tracking-tight">
+                  FitBalance
+                </div>
               </div>
               <div className="hidden md:flex items-center justify-end">
                 <ul className="flex gap-6 text-sm font-medium">
@@ -158,7 +167,7 @@ export function Hero() {
             >
               {primaryCtaLabel}
             </button>
-            
+
             <Link
               href="/auth/login"
               className="inline-flex min-w-[220px] items-center justify-center rounded-full border border-slate-200 bg-white px-6 py-3 text-base font-semibold text-slate-600 transition hover:border-slate-400"

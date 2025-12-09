@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import Image from "next/image";
 import { useState } from "react";
@@ -14,7 +14,8 @@ import {
 const slides = [
   {
     title: "Plan diario",
-    description: "Ve qué comer en cada momento con las porciones ya calculadas.",
+    description:
+      "Ve qué comer en cada momento con las porciones ya calculadas.",
     image: "/assets/landing/mockups/plan-diario.png",
     tip: "Guarda esta captura como public/assets/landing/mockups/plan-diario.png",
   },
@@ -26,7 +27,8 @@ const slides = [
   },
   {
     title: "Resumen para compartir",
-    description: "Descarga un informe bonito para enviarlo por chat o imprimir.",
+    description:
+      "Descarga un informe bonito para enviarlo por chat o imprimir.",
     image: "/assets/landing/mockups/resumen.png",
     tip: "Guarda esta captura como public/assets/landing/mockups/resumen.png",
   },
@@ -35,15 +37,18 @@ const slides = [
 const previewNotes = [
   {
     title: "Se adapta sola",
-    description: "Las capturas lucen bien en escritorio y móvil sin ajustar nada.",
+    description:
+      "Las capturas lucen bien en escritorio y móvil sin ajustar nada.",
   },
   {
     title: "Cero complicaciones",
-    description: "Solo reemplaza las imágenes en la carpeta indicada; no necesitas tocar código.",
+    description:
+      "Solo reemplaza las imágenes en la carpeta indicada; no necesitas tocar código.",
   },
   {
     title: "Cuenta una historia",
-    description: "Usa distintas pantallas para mostrar desde el plan hasta el seguimiento diario.",
+    description:
+      "Usa distintas pantallas para mostrar desde el plan hasta el seguimiento diario.",
   },
 ];
 
@@ -53,18 +58,32 @@ export function AppPreview() {
       <div className="mx-auto max-w-6xl px-6">
         <div className="grid gap-12 lg:grid-cols-[1.2fr_0.8fr]">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-emerald-600">Producto</p>
-            <h2 className="mt-4 font-serif text-3xl font-semibold">Muestra tus pantallas reales en un carrusel suave</h2>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-emerald-600">
+              Producto
+            </p>
+            <h2 className="mt-4 font-serif text-3xl font-semibold">
+              Muestra tus pantallas reales en un carrusel suave
+            </h2>
             <p className="mt-3 text-slate-600">
-              Sube capturas en formato PNG o JPG (1400x900) dentro de {" "}
-              <code className="mx-1 rounded bg-emerald-100/70 px-1 text-xs">/public/assets/landing/mockups</code>.
-              El carrusel las rota automáticamente para que cualquier persona entienda cómo se ve FitBalance.
+              Sube capturas en formato PNG o JPG (1400x900) dentro de{" "}
+              <code className="mx-1 rounded bg-emerald-100/70 px-1 text-xs">
+                /public/assets/landing/mockups
+              </code>
+              . El carrusel las rota automáticamente para que cualquier persona
+              entienda cómo se ve FitBalance.
             </p>
             <div className="mt-10 grid gap-6 md:grid-cols-3">
               {previewNotes.map((note) => (
-                <div key={note.title} className="rounded-2xl border border-white/80 bg-white/80 p-4 shadow-sm">
-                  <p className="font-serif text-base font-semibold">{note.title}</p>
-                  <p className="mt-1 text-sm text-slate-600">{note.description}</p>
+                <div
+                  key={note.title}
+                  className="rounded-2xl border border-white/80 bg-white/80 p-4 shadow-sm"
+                >
+                  <p className="font-serif text-base font-semibold">
+                    {note.title}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {note.description}
+                  </p>
                 </div>
               ))}
             </div>
@@ -79,9 +98,15 @@ export function AppPreview() {
                       <figure className="space-y-4">
                         <MockupImage slide={slide} />
                         <figcaption className="text-center">
-                          <p className="font-serif text-xl font-semibold">{slide.title}</p>
-                          <p className="text-sm text-slate-600">{slide.description}</p>
-                          <p className="mt-2 text-xs text-slate-400">{slide.tip}</p>
+                          <p className="font-serif text-xl font-semibold">
+                            {slide.title}
+                          </p>
+                          <p className="text-sm text-slate-600">
+                            {slide.description}
+                          </p>
+                          <p className="mt-2 text-xs text-slate-400">
+                            {slide.tip}
+                          </p>
                         </figcaption>
                       </figure>
                     </CarouselItem>
