@@ -70,7 +70,7 @@ function buildPrisma() {
   // local datasource (SQLite)
   // Aplicamos override de configuración para entornos locales donde la
   // `prisma.config.ts` pueda no leerse automáticamente.
-  return new PrismaClient({ adapter: { provider: "sqlite" },
+  return new PrismaClient({
     __internal: {
       configOverride: (cfg) => {
         // configOverride: merge datasources and ensure engineType consistency
