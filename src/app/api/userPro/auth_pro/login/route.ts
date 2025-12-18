@@ -96,7 +96,8 @@ export async function POST(request: Request) {
       maxAge: 60 * 60 * 24 * 365,
     });
     return res;
-  } catch (e) {
+  } catch (e: any) {
+    console.error("POST /api/userPro/auth_pro/login error", e);
     return NextResponse.json({ error: "Error del servidor" }, { status: 500 });
   }
 }
